@@ -1,0 +1,4 @@
+node_modules/
+dist/
+recording/
+.DS_Store
