@@ -3,7 +3,15 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": { "dev": "vite --port 5174 --strictPort", "build": "vite build" },
-  "dependencies": { "three": "0.170.0" },
-  "devDependencies": { "vite": "5.4.11" }
+  "scripts": {
+    "dev": "vite --port 5174 --strictPort",
+    "build": "vite build",
+    "khufu:sim": "node scripts/khufu-sim.mjs"
+  },
+  "dependencies": {
+    "three": "0.170.0"
+  },
+  "devDependencies": {
+    "vite": "5.4.11"
+  }
 }
