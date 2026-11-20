@@ -13,16 +13,17 @@ export { DEFAULTS, DAY, YEAR, MONTH, YEAR_DAYS, MONTH_DAYS, withDefaults } from 
 export { ELEM, tagOf } from './planner.js';
 
 // Runs the whole build. snapshots[m] is the full model state at the end of month m + 1
-// (t = (m + 1) × MONTH), restorable with sim.restore().
+// (t = (m + 1) × MONTH), restorable with sim.restore(); `initial` is the state at t = 0.
 export function runFull(overrides = {}, { onMonth } = {}) {
   const sim = createModel(overrides);
+  const initial = sim.snapshot();
   const snapshots = [];
   for (let m = 1; !sim.done; m++) {
     sim.runUntil(m * MONTH);
     if (!sim.done) snapshots.push(sim.snapshot());
     onMonth?.(sim, m);
   }
-  return { sim, snapshots, overrides };
+  return { sim, snapshots, initial, overrides };
 }
 
 // A model positioned at time t: restores the latest snapshot at or before t and replays
@@ -32,6 +33,7 @@ export function seek(run, t, into = null) {
   const sim = into || createModel(run.overrides);
   const m = Math.min(run.snapshots.length, Math.floor(t / MONTH)) - 1;
   if (m >= 0) sim.restore(run.snapshots[m]);
+  else if (into && run.initial) sim.restore(run.initial); // a reused model may be later than t
   if (t >= run.sim.t) { // past the end: the finished state
     if (m < run.snapshots.length - 1 || !sim.done) sim.runUntil(Infinity);
   } else sim.runUntil(t);
