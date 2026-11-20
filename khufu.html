@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Khufu's Pyramid</title>
+<style>
+  :root { --ink: #fbf3e2; --dim: rgba(251, 243, 226, 0.66); --panel: rgba(28, 20, 12, 0.62); --edge: rgba(255, 220, 160, 0.18); --gold: #e9b949; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #d9c39a; font: 13px/1.35 "Avenir Next", "Segoe UI", system-ui, sans-serif; color: var(--ink); }
+  canvas { display: block; }
+  a { color: var(--gold); }
+  .glass { background: var(--panel); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid var(--edge); border-radius: 12px; }
+  #status { position: fixed; top: 12px; left: 12px; padding: 9px 12px 10px; width: 300px; }
+  #status h1 { margin: 0 0 3px; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); font-weight: 600; }
+  #where { font-size: 13px; }
+  #note { color: var(--dim); font-size: 12px; margin-top: 3px; min-height: 16px; }
+  #stats { margin-top: 6px; font: 11px/1.5 ui-monospace, Menlo, monospace; color: var(--dim); font-variant-numeric: tabular-nums; }
+  #back { display: inline-block; margin-top: 6px; font-size: 12px; }
+  #rooms { position: fixed; right: 12px; top: 12px; padding: 8px; width: 210px; display: grid; gap: 3px; }
+  #rooms h2 { margin: 0 0 3px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--gold); font-weight: 600; }
+  #rooms button { appearance: none; text-align: left; border: 0; background: rgba(255,255,255,0.07); color: var(--ink); border-radius: 7px; padding: 4px 8px; font: inherit; font-size: 12px; cursor: pointer; display: flex; justify-content: space-between; }
+  #rooms button:hover { background: rgba(255,255,255,0.16); }
+  #rooms span { color: var(--dim); font-variant-numeric: tabular-nums; }
+  #controls { position: fixed; right: 12px; bottom: 12px; display: flex; gap: 4px; padding: 5px; align-items: center; }
+  #controls button { appearance: none; border: 0; background: rgba(255,255,255,0.08); color: var(--ink); height: 32px; min-width: 34px; padding: 0 10px; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
+  #controls button:hover { background: rgba(255,255,255,0.18); }
+  #controls button.on { background: var(--gold); color: #2a1c08; }
+  #controls .sep { width: 1px; height: 20px; background: var(--edge); margin: 0 3px; }
+  #controls label { display: flex; align-items: center; gap: 6px; padding: 0 6px; color: var(--dim); font-size: 12px; }
+  #courses { width: 150px; accent-color: var(--gold); }
+  #courseLabel { min-width: 74px; font-variant-numeric: tabular-nums; color: var(--ink); }
+  #hint { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--dim); display: none; pointer-events: none; text-align: center; }
+  #cross { position: fixed; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255,255,255,0.75); display: none; pointer-events: none; }
+  .label { padding: 2px 7px; border-radius: 6px; background: rgba(20, 14, 8, 0.72); border: 1px solid rgba(233, 185, 73, 0.5); color: #fff4d8; font-size: 11px; white-space: nowrap; pointer-events: none; }
+  @media (max-width: 900px) { #rooms { top: auto; bottom: 60px; } #hint { top: auto; bottom: 60px; } }
+  @media (max-width: 640px) { #status { width: auto; right: 12px; } #controls { left: 12px; flex-wrap: wrap; } #courses { width: 100px; } #rooms { width: auto; left: 12px; grid-template-columns: 1fr 1fr; bottom: 110px; } }
+</style>
+</head>
+<body>
+<div id="status" class="glass">
+  <h1>Khufu's pyramid · Giza</h1>
+  <div id="where">The finished monument, c. 2560 BC</div>
+  <div id="note"></div>
+  <div id="stats">–</div>
+  <a id="back" href="./index.html">← Pyramid Builders (the small pyramid)</a>
+</div>
+<div id="rooms" class="glass"><h2>Walk to</h2></div>
+<div id="hint" class="glass">WASD walk · drag to look (or click to lock the mouse) · Shift run · Space climb · Esc release</div>
+<div id="cross"></div>
+<div id="controls" class="glass">
+  <label title="Show the pyramid as if built up to this course (a section through the rooms)">Courses <input id="courses" type="range" min="1" max="215" step="1" value="215"><span id="courseLabel"></span></label>
+  <span class="sep"></span>
+  <button id="xray" title="See through the masonry (X)">X-ray</button>
+  <button id="walk" title="First-person walking (F)">Walk</button>
+</div>
+<script type="module" src="/src/khufu/main.js"></script>
+</body>
+</html>

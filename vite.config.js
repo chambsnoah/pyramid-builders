@@ -1,9 +1,18 @@
 // Dev server with a small endpoint that saves rendered tour frames (used to make the video).
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = path.dirname(fileURLToPath(import.meta.url));
 
 export default {
   base: './', // relative asset paths, so the build works from GitHub Pages' /pyramid-builders/ subpath
+  build: {
+    rollupOptions: {
+      // two pages: the small-pyramid simulation and the full-size Khufu monument
+      input: { main: path.resolve(root, 'index.html'), khufu: path.resolve(root, 'khufu.html') },
+    },
+  },
   plugins: [{
     name: 'frame-sink',
     configureServer(server) {
