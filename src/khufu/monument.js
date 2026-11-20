@@ -213,20 +213,24 @@ export class Monument {
       this.outline.visible = false; this.outline.name = 'outline';
       this.group.add(this.outline);
     }
-    this.built = COURSE_COUNT;
+    this.built = COURSE_COUNT; this.capstone = true;
     this.far = false;
   }
 
-  // Show the pyramid finished up to `n` courses (n = COURSE_COUNT shows the pyramidion too).
-  setBuiltCourses(n) {
+  // Show the pyramid finished up to `n` courses. n = COURSE_COUNT shows the pyramidion too,
+  // unless `capstone` is false (all the masonry done, the capstone not yet set).
+  setBuiltCourses(n, capstone = true) {
     n = Math.max(0, Math.min(COURSE_COUNT, Math.round(n)));
-    this.built = n;
+    const changed = n !== this.built || capstone !== this.capstone;
+    this.built = n; this.capstone = capstone;
+    if (!changed) return this.topY();
     this.courses.geometry.setDrawRange(0, n > 0 ? this.ends[n - 1] : 0);
-    if (n > 0 && n < COURSE_COUNT) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1); }
+    if (n > 0 && !this.complete) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1); }
     this.updateVisibility();
     return this.topY();
   }
-  topY() { return this.built === COURSE_COUNT ? HEIGHT : this.built > 0 ? COURSES[this.built - 1].y1 : 0; }
+  get complete() { return this.built === COURSE_COUNT && this.capstone; }
+  topY() { return this.complete ? HEIGHT : this.built > 0 ? COURSES[this.built - 1].y1 : 0; }
 
   // swap to the hull when the whole pyramid is a small part of the view
   setFar(far) {
@@ -238,7 +242,7 @@ export class Monument {
   // The hull stands in only for the finished pyramid. A part-built one keeps its courses
   // and the cap at any distance, since the hull would cover the section.
   updateVisibility() {
-    const complete = this.built === COURSE_COUNT;
+    const complete = this.complete;
     this.hull.visible = this.far && complete;
     this.courses.visible = !this.hull.visible;
     this.pyramidion.visible = complete && !this.hull.visible;

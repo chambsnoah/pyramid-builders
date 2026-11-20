@@ -39,24 +39,29 @@ Workers find paths on a navigation grid with A*, step aside for each other and q
 
 **[Open the full-size Great Pyramid](https://chambsnoah.github.io/pyramid-builders/khufu.html)** (`khufu.html`; locally http://localhost:5174/khufu.html)
 
-The first step toward simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://github.com/chambsnoah/pyramid-builders/issues/1)). It shows the finished monument, 230.3 m square and 146.6 m high, with 215 courses and a pyramidion. You can see through it in X-ray and walk through its interior. There is no construction simulation yet.
+Simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://github.com/chambsnoah/pyramid-builders/issues/1)): 230.3 m square and 146.6 m high, with 215 courses and a pyramidion. You can scrub through its 20-year build, see through it in X-ray and walk through its interior.
+
+- **Timeline in years:** play and pause, set the speed (from 1× real working time to a year a second), step a day or a month either way (←/→, Shift for a month), or drag to any working day. The clock shows the year of the build, the season and month (Akhet, Peret, Shemu), the day and the hour. Diamonds on the timeline mark milestones, such as the Queen's Chamber and King's Chamber roofed, the Grand Gallery complete, the ramps switching to zigzags and the capstone set; click one to jump there. On load the page shows the finished monument; `?year=9` or `?day=1500` opens at another time, and `&play` starts playing.
+- **The build, course by course:** the finished courses are drawn as surfaces and the course being laid block by block, with the stones being levered into place in gold, all read from the event model at the time on the timeline.
+- **Statistics:** blocks set, blocks per working day (with a chart of the whole build), workers on site and the sled gangs out, coming back or waiting, the quarry yard and the casing on the quay, and the longest queues right now on the ramps, landings, berths and loading bays.
 
 - **Walk:** the buttons (or keys 1–6) jump to the north side, the entrance, the subterranean chamber, the Queen's Chamber, the Grand Gallery or the King's Chamber. You crouch automatically in the low passages. Where one passage leaves through the roof of another (the ascending passage opens in the roof of the descending one), a "Space · climb up" prompt appears; press Space to scramble up. Walking into a ledge you can climb (the rock terraces in the subterranean chamber) climbs it after a moment, and walking into the wall beside a narrow doorway slides you into it.
-- **Courses:** the slider cuts the pyramid off at any course and shows the rooms in section.
+- **Courses:** the slider jumps to the day any course was finished and shows the rooms in section.
 - The course heights are pinned to Petrie's levels for the thick courses (1883, sec. 146). The rooms and passages are placed from Petrie's survey and standard plans. `src/khufu/data.js` notes the sources and which figures are approximate.
 
 | Entrance | Grand Gallery | King's Chamber |
 | --- | --- | --- |
 | ![Entrance stair on the north face](media/khufu/entrance.jpg) | ![Grand Gallery](media/khufu/gallery.jpg) | ![King's Chamber](media/khufu/kings.jpg) |
 
-### The 20-year build as an event model (headless, Phase 2)
+### The 20-year build as an event model
 
-`src/khufu/sim/` simulates the logistics of the whole build without graphics. It doesn't drive the page yet; Phase 3 will.
+`src/khufu/sim/` simulates the logistics of the whole build without graphics. In the browser it runs in a Web Worker (`src/khufu/sim/worker.js`): the full build takes about 2.2 s there when the page opens, then the timeline asks the worker for the state at each time it shows. A seek restores the month's snapshot and replays at most a month of events, so any day is reached in about 10 ms (30 ms at worst), backward or forward.
 
 ```bash
 npm run khufu:sim                                  # full build, report in the terminal (~2.5 s)
 npm run khufu:sim -- --seed 7 --set haul.gangs=80  # other seeds and settings
 npm run khufu:check                                # determinism, snapshot replay and calibration checks
+npm run khufu:seek                                 # seek times and exactness, as the timeline seeks
 ```
 
 - **Discrete events, not ticks.** Quarry faces cut blocks; sled gangs haul them along a road graph to a ramp; ramp lanes, loading bays, landings and harbour berths are first-come-first-served resources with queues; setting crews lay them. Boats bring the Tura casing, yearly convoys the Aswan granite, and heavy gangs take the granite and the roof beams up a whole ramp width at a time.
@@ -86,9 +91,13 @@ npm run khufu:check                                # determinism, snapshot repla
 | `src/khufu/monument.js` | Khufu: casing surfaces per course, cap, pyramidion, far hull |
 | `src/khufu/rooms.js` | Khufu: room and passage linings cut from the volumes |
 | `src/khufu/collision.js`, `walker.js` | Khufu: sparse column collision and first-person walking |
-| `src/khufu/main.js` | Khufu: scene, X-ray, HUD, frame-rate measurement |
-| `src/khufu/sim/` | Khufu: headless 20-year event model (queue, resources, roads, planner, ramp theories, model) |
-| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs` | Khufu: run the model and check it |
+| `src/khufu/main.js` | Khufu: scene, X-ray, HUD, wiring of the timeline to the renderer, frame-rate and seek measurement |
+| `src/khufu/timeline.js` | Khufu: the worker client (one seek in flight), timeline controls, milestones, historical clock |
+| `src/khufu/statsPanel.js` | Khufu: statistics panel and blocks-per-day chart |
+| `src/khufu/working.js` | Khufu: the course being laid, one instanced block per stone set |
+| `src/khufu/sim/` | Khufu: 20-year event model (queue, resources, roads, planner, ramp theories, model) |
+| `src/khufu/sim/view.js`, `worker.js` | Khufu: what the page reads from the model at a time (panels, course layout, milestones, seeking), and the worker that runs it |
+| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs` | Khufu: run the model, check it, time seeks |
 
 ## Making the video
 

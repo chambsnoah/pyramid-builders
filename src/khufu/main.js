@@ -1,5 +1,6 @@
-// Khufu's pyramid, Phase 1 of the plan in issue #1: the finished monument at full size,
-// drawn as surfaces, with a walkable interior. No simulation yet.
+// Khufu's pyramid (issue #1). Phase 1: the monument at full size, drawn as surfaces, with a
+// walkable interior. Phase 3: the 20-year event model runs in a worker, and a timeline in
+// years with milestones and a statistics panel drives the renderer course by course.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
@@ -9,6 +10,10 @@ import { Monument } from './monument.js';
 import { Rooms } from './rooms.js';
 import { Collision } from './collision.js';
 import { Walker } from './walker.js';
+import { WorkingCourse } from './working.js';
+import { SimClient, Timeline, clockText } from './timeline.js';
+import { StatsPanel } from './statsPanel.js';
+import { DAY, YEAR } from './sim/params.js';
 
 buildTextures();
 
@@ -115,6 +120,7 @@ const monument = new Monument(scene);
 const rooms = new Rooms(scene);
 const collision = new Collision(rooms.solidBoxes);
 const walker = new Walker(camera, renderer.domElement, collision);
+const working = new WorkingCourse(scene);
 
 // room labels for X-ray
 const overlay = new THREE.Group(); overlay.visible = false; scene.add(overlay);
@@ -134,7 +140,7 @@ const params = new URLSearchParams(location.search);
 let xray = false;
 function setXray(on) {
   xray = on;
-  monument.setXray(on); rooms.setXray(on); overlay.visible = on;
+  monument.setXray(on); rooms.setXray(on); working.setXray(on); overlay.visible = on;
   for (const g of ground) { g.material.transparent = on; g.material.opacity = on ? 0.35 : 1; g.material.depthWrite = !on; g.material.needsUpdate = true; }
   orbit.maxPolarAngle = on ? 2.6 : 1.52;
   $('xray').classList.toggle('on', on);
@@ -175,19 +181,26 @@ SPOTS.forEach((s, i) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  if (!walker.enabled && timeline.ready) {
+    if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { timeline.stepDays((e.code === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 25 : 1)); e.preventDefault(); }
+    if (e.code === 'KeyP' || (e.code === 'Space' && e.target.tagName !== 'BUTTON')) { timeline.setPlaying(!timeline.playing); e.preventDefault(); }
+  }
   if (e.code === 'KeyX') setXray(!xray);
   if (e.code === 'KeyF') setWalk(!walker.enabled);
   const d = /^Digit(\d)$/.exec(e.code);
   if (d && SPOTS[+d[1] - 1]) setWalk(true, SPOTS[+d[1] - 1]);
 });
 
-// build height (a section through the rooms; later phases drive this from the timeline)
+// build height: finished courses as surfaces (and the capstone once it is set)
 const slider = $('courses');
 slider.max = COURSE_COUNT; slider.value = COURSE_COUNT;
-function setCourses(n) {
-  const top = monument.setBuiltCourses(n);
+function setCourses(n, capstone = true) {
+  const before = monument.built, cap = monument.capstone;
+  const top = monument.setBuiltCourses(n, capstone);
+  if (monument.built === before && monument.capstone === cap && setCourses.done) return;
+  setCourses.done = true;
   collision.topY = top;
-  rooms.setSection(monument.built < COURSE_COUNT ? top + 0.001 : null);
+  rooms.setSection(!monument.complete ? top + 0.001 : null);
   // new masonry may have risen through the walker (standing on a lower cap): lift it to the
   // nearest floor with room above, or leave walking if there is none
   if (walker.enabled && !walker.passable(walker.pos.x, walker.pos.z, walker.pos.y)) {
@@ -196,11 +209,48 @@ function setCourses(n) {
     walker.pitch = pitch;
     if (!walker.passable(walker.pos.x, walker.pos.z, walker.pos.y)) setWalk(false);
   }
-  $('courseLabel').textContent = monument.built === COURSE_COUNT ? `all ${COURSE_COUNT}` : `${monument.built} · ${top.toFixed(1)} m`;
+  $('courseLabel').textContent = monument.complete ? `all ${COURSE_COUNT}` : `${monument.built} · ${top.toFixed(1)} m`;
+  if (!slider.matches(':active')) slider.value = monument.built;
 }
-slider.addEventListener('input', () => setCourses(+slider.value));
+// Before the model has run the slider cuts the static monument; after, it jumps the timeline
+// to the moment that course was finished.
+slider.addEventListener('input', () => {
+  const n = +slider.value;
+  if (!timeline.ready) { setCourses(n); return; }
+  const S = client.summary;
+  timeline.seek(n >= COURSE_COUNT ? S.endT : S.courseDone[n - 1]);
+});
 setCourses(+(params.get('courses') || COURSE_COUNT));
 slider.value = monument.built;
+
+// ---- the event model, the timeline and the statistics ------------------------------
+let view = null;
+const stats = new StatsPanel($('simstats'));
+const timeline = new Timeline($('timeline'), { onSeek: (t) => client.seek(t) });
+const client = new SimClient({
+  onProgress: (m) => timeline.setProgress(`Running the 20-year build in a worker… year ${Math.floor(m.t / YEAR) + 1}`),
+  onReady: (summary, timing) => {
+    console.info(`[khufu] model ran in the worker in ${(timing.ms / 1000).toFixed(2)} s: ${summary.blocks} blocks, ${(summary.endT / YEAR).toFixed(2)} years, hash ${summary.hash}`);
+    window.__khufu.summary = summary; window.__khufu.runMs = timing.ms;
+    stats.setRun(summary);
+    timeline.setRun(summary);
+    let t = summary.endT; // by default, the finished monument (as before the model has run)
+    if (params.has('day')) t = (+params.get('day') - 1) * DAY;
+    else if (params.has('year')) t = (+params.get('year') - 1) * YEAR;
+    else if (params.has('courses')) { const n = +params.get('courses'); t = n >= COURSE_COUNT ? summary.endT : summary.courseDone[Math.max(0, n - 1)]; }
+    timeline.seek(t);
+    if (params.has('play')) timeline.setPlaying(true);
+  },
+  onState: (m, timing) => {
+    if ('layout' in m) working.setLayout(m.layout);
+    view = m.view;
+    setCourses(Math.min(view.built, COURSE_COUNT), view.done);
+    working.update(view.course);
+    stats.update(view, m.t, timing);
+  },
+  onError: (msg) => { console.error('[khufu] worker:', msg); timeline.setProgress('The event model failed to run (see the console)'); },
+});
+client.init();
 
 // which room the walker is in
 function whereIs(p) {
@@ -241,7 +291,21 @@ function syncBench(n = 60) {
   };
 }
 window.__khufu = {
-  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, perf, setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
+  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, working, perf,
+  get timeline() { return timeline; }, get client() { return client; }, get state() { return view; },
+  // time seeks through the worker: [{ day, worker ms, round trip ms, … }] for each day in turn
+  benchSeek: async (days) => {
+    const out = [];
+    for (const d of days) {
+      const t = Math.max(0, Math.min(client.summary.endT, d * DAY));
+      timeline.t = t; timeline.render();
+      const a = performance.now();
+      const r = await client.seekAndWait(t);
+      await new Promise((res) => { requestAnimationFrame(res); setTimeout(res, 100); }); // next frame (rAF stops in a hidden tab)
+      out.push({ day: d, workerMs: +r.ms.toFixed(2), roundTripMs: +r.roundTrip.toFixed(1), toFrameMs: +(performance.now() - a).toFixed(1), built: r.view.built, blocks: r.view.blocksSet });
+    }
+    return out;
+  }, setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
   view: (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); orbit.target.set(tx, ty, tz); orbit.update(); },
   // run `seconds` of frames and report the frame rate (requestAnimationFrame timing)
   measure: (seconds = 3) => new Promise((res) => {
@@ -258,17 +322,18 @@ window.__khufu = {
 let hudT = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
+  timeline.tick(dt);
   if (walker.enabled) walker.update(dt); else orbit.update();
   const climbShown = walker.enabled && walker.canClimb;
   if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
   // far detail level: from far away the finished pyramid is a textured hull and the rooms are
   // skipped (a part-built pyramid keeps its section, cap and rooms)
-  const far = !walker.enabled && monument.built === COURSE_COUNT && camera.position.distanceTo(orbit.target.clone().setY(50)) > 1500 && camera.position.length() > 1500;
+  const far = !walker.enabled && monument.complete && camera.position.distanceTo(orbit.target.clone().setY(50)) > 1500 && camera.position.length() > 1500;
   monument.setFar(far && !xray);
   rooms.group.visible = !(far && !xray);
   // inside, the open sky stops lighting things: only the torch remains
   hemi.intensity = THREE.MathUtils.lerp(HEMI, 0.04, walker.enabled ? walker.indoor : 0);
-  rooms.setBrightness(xray || monument.built < COURSE_COUNT ? 1 : THREE.MathUtils.lerp(0.12, 1, walker.enabled ? walker.indoor : 0));
+  rooms.setBrightness(xray || !monument.complete ? 1 : THREE.MathUtils.lerp(0.12, 1, walker.enabled ? walker.indoor : 0));
   renderer.render(scene, camera);
   labelRenderer.domElement.style.display = overlay.visible && !walker.enabled ? '' : 'none';
   if (overlay.visible && !walker.enabled) labelRenderer.render(scene, camera);
@@ -285,8 +350,14 @@ function frame() {
       $('where').textContent = el ? el.name : walker.indoor > 0.5 ? 'In the masonry' : walker.pos.y > 0.5 ? 'On the access stair' : 'Outside, on the plateau';
       $('note').textContent = el ? el.note : walker.indoor > 0.5 ? '' : 'The stair up to the entrance is added for access; the casing itself is smooth';
     } else {
-      $('where').textContent = `The finished monument, c. 2560 BC`;
-      $('note').textContent = `${COURSE_COUNT} courses and a pyramidion, ${HEIGHT} m high on a ${(HALF * 2).toFixed(1)} m base`;
+      if (view && !view.done) {
+        const c = view.course;
+        $('where').textContent = c && c.ci === COURSE_COUNT ? 'Setting the capstone' : `Laying course ${view.cur + 1} of ${COURSE_COUNT}, ${view.topY.toFixed(1)} m up`;
+        $('note').textContent = `${clockText(timeline.t)} of the build`;
+      } else {
+        $('where').textContent = `The finished monument, c. 2560 BC`;
+        $('note').textContent = `${COURSE_COUNT} courses and a pyramidion, ${HEIGHT} m high on a ${(HALF * 2).toFixed(1)} m base`;
+      }
     }
   }
   requestAnimationFrame(frame);
