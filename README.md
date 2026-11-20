@@ -35,6 +35,20 @@ Then open http://localhost:5174.
 
 Workers find paths on a navigation grid with A*, step aside for each other and queue on the ramps, so they do not walk through walls, buildings or one another.
 
+## Khufu's pyramid (work in progress)
+
+**[Open the full-size Great Pyramid](https://chambsnoah.github.io/pyramid-builders/khufu.html)** (`khufu.html`; locally http://localhost:5174/khufu.html)
+
+The first step toward simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://github.com/chambsnoah/pyramid-builders/issues/1)). It shows the finished monument, 230.3 m square and 146.6 m high, with 215 courses and a pyramidion. You can see through it in X-ray and walk through its interior. There is no construction simulation yet.
+
+- **Walk:** the buttons (or keys 1–6) jump to the north side, the entrance, the subterranean chamber, the Queen's Chamber, the Grand Gallery or the King's Chamber. You crouch automatically in the low passages. Press Space to climb up where one passage leaves through the roof of another.
+- **Courses:** the slider cuts the pyramid off at any course and shows the rooms in section.
+- The course heights are pinned to Petrie's levels for the thick courses (1883, sec. 146). The rooms and passages are placed from Petrie's survey and standard plans. `src/khufu/data.js` notes the sources and which figures are approximate.
+
+| Entrance | Grand Gallery | King's Chamber |
+| --- | --- | --- |
+| ![Entrance stair on the north face](media/khufu/entrance.jpg) | ![Grand Gallery](media/khufu/gallery.jpg) | ![King's Chamber](media/khufu/kings.jpg) |
+
 ## Code map
 
 | File | What it does |
@@ -52,6 +66,11 @@ Workers find paths on a navigation grid with A*, step aside for each other and q
 | `src/fps.js` | First-person walking and collision |
 | `src/tour.js` | Guided tour script and caption overlay |
 | `src/main.js` | Renderer, HUD, timeline, inspect, tour recorder |
+| `src/khufu/data.js` | Khufu: dimensions, course heights, rooms as volumes, sources |
+| `src/khufu/monument.js` | Khufu: casing surfaces per course, cap, pyramidion, far hull |
+| `src/khufu/rooms.js` | Khufu: room and passage linings cut from the volumes |
+| `src/khufu/collision.js`, `walker.js` | Khufu: sparse column collision and first-person walking |
+| `src/khufu/main.js` | Khufu: scene, X-ray, HUD, frame-rate measurement |
 
 ## Making the video
 
