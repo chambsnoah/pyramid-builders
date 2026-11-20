@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export default {
+  base: './', // relative asset paths, so the build works from GitHub Pages' /pyramid-builders/ subpath
   plugins: [{
     name: 'frame-sink',
     configureServer(server) {

@@ -514,6 +514,37 @@ window.__record = async ({ fpsOut = 30, width = 1280, height = 720, from = 0, to
   state.finished = true;
   return state;
 };
+// Render the whole build from the start at a fixed speed, with the camera circling the site
+// once (used for the README GIF). No tour, no captions: only a small status pill.
+window.__recordRun = async ({ speed = 512, fpsOut = 15, width = 960, height = 540, hold = 2, quality = 0.88, radius = 56, camH = 30, center = [6, 0, 6], lookY = 3, a0 = -2.2 } = {}) => {
+  recording = true;
+  const perFrame = Math.round(speed / fpsOut / TICK); // simulation ticks between output frames
+  const est = Math.ceil(35100 / (perFrame * TICK)) + hold * fpsOut;
+  const state = window.__recState = { done: 0, total: est, error: null, finished: false };
+  try {
+    renderer.setPixelRatio(1); renderer.setSize(width, height, false);
+    camera.aspect = width / height; camera.updateProjectionMatrix();
+    const out = document.createElement('canvas'); out.width = width; out.height = height;
+    const ctx = out.getContext('2d');
+    let i = 0, after = 0;
+    while (after < hold * fpsOut) {
+      for (let k = 0; k < perFrame && sim.phase !== 'complete'; k++) sim.tick(TICK);
+      if (sim.phase === 'complete') after++;
+      const a = a0 + (i / est) * Math.PI * 2; // one full turn over the clip
+      camera.position.set(center[0] + Math.cos(a) * radius, camH, center[2] + Math.sin(a) * radius);
+      camera.lookAt(center[0], lookY, center[2]);
+      drawWorld(perFrame * TICK, 1 / fpsOut);
+      ctx.drawImage(renderer.domElement, 0, 0, width, height);
+      drawOverlay(ctx, width, height, { title: '', sub: '', fade: 0 }, { status: `${speed}× · ${statusLine()}` });
+      const blob = await new Promise((r) => out.toBlob(r, 'image/jpeg', quality));
+      await fetch(`/__frame?i=${i}`, { method: 'POST', body: blob });
+      state.done = ++i;
+    }
+    state.total = i;
+  } catch (e) { state.error = String(e && e.stack || e); }
+  state.finished = true;
+  return state;
+};
 // render the current state once and save it as recording/<name>.jpg (for checking views without the pane)
 window.__snap = async (name = 'snap', real = 1 / 30) => {
   drawWorld(0, real);
