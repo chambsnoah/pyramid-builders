@@ -5,12 +5,22 @@
 //   space at least CRAWL high, and slows down while bent over.
 // - Junctions where one passage leaves through the roof of another (descending →
 //   ascending, the foot of the Grand Gallery) need a scramble: Space climbs up to CLIMB
-//   onto a ledge ahead. Ledges up to AUTO_CLIMB (the great step) are climbed by walking on.
+//   onto a ledge ahead (or, failing that, any ledge within reach around the body).
+//   Ledges up to AUTO_CLIMB (the great step) are climbed by walking on; higher ones up to
+//   CLIMB after pushing against them for PUSH_CLIMB seconds. `canClimb` says whether Space
+//   would do anything here, for an on-screen prompt.
+// - Narrow doorways (0.85 m) are hard to line up with: walking into a wall next to an
+//   opening slides the body sideways into it (up to NUDGE).
 // - Of several floors within reach, the one nearest the feet is taken, so walking past a
 //   junction keeps to the passage you are in.
 import * as THREE from 'three';
 
-const STAND = 1.75, EYE_DROP = 0.13, CRAWL = 0.8, STEP = 0.45, CLIMB = 1.9, AUTO_CLIMB = 1.0, RADIUS = 0.24;
+// MIN_CLIMB: a ledge must rise more than the floor of a 26° passage does within the 0.85 m
+// that findClimb looks ahead (at most 0.42 m, 0.45 m beside the Grand Gallery's benches),
+// or every sloping passage would look climbable; and less than the 0.52 m step in the
+// Queen's Chamber passage, or that step can't be climbed at all
+const MIN_CLIMB = 0.48;
+const STAND = 1.75, EYE_DROP = 0.13, CRAWL = 0.8, STEP = 0.45, CLIMB = 2.2, AUTO_CLIMB = 1.0, PUSH_CLIMB = 0.3, NUDGE = 0.4, RADIUS = 0.24;
 
 export class Walker {
   constructor(camera, dom, collision) {
@@ -22,6 +32,8 @@ export class Walker {
     this.height = STAND; this.bob = 0; this.indoor = 0;
     this.keys = {};
     this.climb = null;
+    this.push = 0; // seconds spent walking into something
+    this.canClimb = false; this.climbCheck = 0;
     this.torch = new THREE.PointLight(0xffb36a, 0, 26, 1.1);
     camera.add(this.torch);
     this.torch.position.set(0.18, 0.2, 0.3);
@@ -30,7 +42,7 @@ export class Walker {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       this.keys[e.code] = true;
-      if (e.code === 'Space' && this.enabled) { e.preventDefault(); this.tryClimb(CLIMB); }
+      if (e.code === 'Space' && this.enabled) { e.preventDefault(); this.tryClimb(CLIMB, 4); }
     });
     window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
     window.addEventListener('blur', () => { this.keys = {}; });
@@ -84,23 +96,34 @@ export class Walker {
     return h;
   }
 
-  // scramble up onto a ledge ahead, if there is one within `reach`
-  tryClimb(reach) {
-    if (this.climb) return false;
-    const dir = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+  // a ledge to scramble onto within `reach`: straight ahead first, then up to `around`
+  // eighths of a turn either side (4 = any direction: the ascending passage opens overhead
+  // and behind someone climbing out of the descending one). Returns where to stand, or null.
+  findClimb(reach, around = 0) {
     const feet = this.pos.y;
-    for (const d of [0, 0.25, 0.45, 0.65, 0.85]) {
-      const x = this.pos.x + dir.x * d, z = this.pos.z + dir.z * d;
-      const s = this.col.column(x, z);
-      for (let i = 0; i < s.length; i++) {
-        const f = s[i].y1, c = i + 1 < s.length ? s[i + 1].y0 : Infinity;
-        if (!s[i].walk || f <= feet + STEP * 0.5 || f > feet + reach || c - f < CRAWL) continue;
-        if (!this.passable(x, z, f)) continue;
-        this.climb = { from: this.pos.clone(), to: new THREE.Vector3(x, f, z), t: 0, dur: 0.25 + (f - feet) * 0.3 };
-        return true;
+    const headings = [0, 1, -1, 2, -2, 3, -3, 4].filter((k) => Math.abs(k) <= around).map((k) => this.yaw + (k * Math.PI) / 4);
+    for (const yaw of headings) {
+      const dx = -Math.sin(yaw), dz = -Math.cos(yaw);
+      for (const d of [0, 0.25, 0.45, 0.65, 0.85]) {
+        const x = this.pos.x + dx * d, z = this.pos.z + dz * d;
+        const s = this.col.column(x, z);
+        for (let i = 0; i < s.length; i++) {
+          const f = s[i].y1, c = i + 1 < s.length ? s[i + 1].y0 : Infinity;
+          if (!s[i].walk || f <= feet + MIN_CLIMB || f > feet + reach || c - f < CRAWL) continue;
+          if (this.passable(x, z, f)) return new THREE.Vector3(x, f, z);
+        }
       }
     }
-    return false;
+    return null;
+  }
+  // scramble up onto a ledge, if there is one within `reach`
+  tryClimb(reach, around = 0) {
+    if (this.climb) return false;
+    const to = this.findClimb(reach, around);
+    if (!to) return false;
+    this.climb = { from: this.pos.clone(), to, t: 0, dur: 0.25 + (to.y - this.pos.y) * 0.3 };
+    this.push = 0; this.canClimb = false;
+    return true;
   }
 
   enter(p, yaw) {
@@ -141,6 +164,8 @@ export class Walker {
       this.pos.y = c.from.y + (c.to.y - c.from.y) * Math.min(1, e * 1.6);
       if (k >= 1) { this.pos.copy(c.to); this.climb = null; this.vel.set(0, 0, 0); }
     } else this.move(dt);
+    this.climbCheck -= dt;
+    if (this.climbCheck <= 0) { this.climbCheck = 0.15; this.canClimb = !this.climb && !!this.findClimb(CLIMB, 4); }
     // crouch to fit the space overhead
     const room = this.headroom(this.pos.x, this.pos.z, this.pos.y);
     const want = Math.min(STAND, Math.max(CRAWL, room - 0.06));
@@ -159,6 +184,24 @@ export class Walker {
     this.torch.intensity = this.indoor * 9 * (0.93 + 0.07 * Math.sin(now * 0.013) * Math.sin(now * 0.007));
   }
 
+  // walking into a wall beside an opening: slide sideways toward the nearest spot (within
+  // NUDGE) from which the body can carry on in the direction it wants to go
+  nudge(want, step) {
+    const px = -want.z, pz = want.x, ahead = 0.1, feet = this.pos.y;
+    for (let o = 0.05; o <= NUDGE + 1e-6; o += 0.05) {
+      for (const sgn of [1, -1]) {
+        const x = this.pos.x + px * o * sgn, z = this.pos.z + pz * o * sgn;
+        if (!this.passable(x, z, feet) || !this.passable(x + want.x * ahead, z + want.z * ahead, feet)) continue;
+        // every point on the way there must be clear too
+        const k = Math.min(1, step / o), mx = this.pos.x + px * o * sgn * k, mz = this.pos.z + pz * o * sgn * k;
+        if (!this.passable(mx, mz, feet)) continue;
+        this.pos.x = mx; this.pos.z = mz;
+        return true;
+      }
+    }
+    return false;
+  }
+
   move(dt) {
     const k = this.keys;
     const fwd = (k.KeyW || k.ArrowUp ? 1 : 0) - (k.KeyS || k.ArrowDown ? 1 : 0);
@@ -170,11 +213,14 @@ export class Walker {
     if (dir.lengthSq() > 0) dir.normalize().multiplyScalar(speed);
     this.vel.lerp(dir, Math.min(1, dt * 10));
     let blocked = false;
+    const want = dir.lengthSq() > 0 ? dir.clone().normalize() : null;
     const nx = this.pos.x + this.vel.x * dt;
     if (this.passable(nx, this.pos.z, this.pos.y)) this.pos.x = nx; else { blocked = blocked || Math.abs(this.vel.x) > 0.3; this.vel.x = 0; }
     const nz = this.pos.z + this.vel.z * dt;
     if (this.passable(this.pos.x, nz, this.pos.y)) this.pos.z = nz; else { blocked = blocked || Math.abs(this.vel.z) > 0.3; this.vel.z = 0; }
-    if (blocked && fwd > 0 && this.tryClimb(AUTO_CLIMB)) return;
+    if (blocked && want) this.nudge(want, speed * dt);
+    this.push = blocked && fwd > 0 ? this.push + dt : 0;
+    if (blocked && fwd > 0 && (this.tryClimb(AUTO_CLIMB) || (this.push > PUSH_CLIMB && this.tryClimb(CLIMB, 1)))) return;
     const s = this.support(this.pos.x, this.pos.z, this.pos.y);
     if (!s) return;
     const floor = s.f;

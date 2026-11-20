@@ -31,6 +31,7 @@
   #courses { width: 150px; accent-color: var(--gold); }
   #courseLabel { min-width: 74px; font-variant-numeric: tabular-nums; color: var(--ink); }
   #hint { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--dim); display: none; pointer-events: none; text-align: center; }
+  #climb { position: fixed; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); padding: 4px 10px; font-size: 12px; color: var(--ink); display: none; pointer-events: none; }
   #cross { position: fixed; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255,255,255,0.75); display: none; pointer-events: none; }
   .label { padding: 2px 7px; border-radius: 6px; background: rgba(20, 14, 8, 0.72); border: 1px solid rgba(233, 185, 73, 0.5); color: #fff4d8; font-size: 11px; white-space: nowrap; pointer-events: none; }
   @media (max-width: 900px) { #rooms { top: auto; bottom: 60px; } #hint { top: auto; bottom: 60px; } }
@@ -48,6 +49,7 @@
 <div id="rooms" class="glass"><h2>Walk to</h2></div>
 <div id="hint" class="glass">WASD walk · drag to look (or click to lock the mouse) · Shift run · Space climb · Esc release</div>
 <div id="cross"></div>
+<div id="climb" class="glass">Space · climb up</div>
 <div id="controls" class="glass">
   <label title="Show the pyramid as if built up to this course (a section through the rooms)">Courses <input id="courses" type="range" min="1" max="215" step="1" value="215"><span id="courseLabel"></span></label>
   <span class="sep"></span>

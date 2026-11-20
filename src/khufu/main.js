@@ -163,6 +163,7 @@ function setWalk(on, spot) {
   $('walk').classList.toggle('on', on);
   $('hint').style.display = on ? 'block' : 'none';
   $('cross').style.display = on ? 'block' : 'none';
+  if (!on) $('climb').style.display = 'none';
 }
 $('walk').onclick = () => setWalk(!walker.enabled);
 renderer.domElement.addEventListener('click', () => { if (walker.enabled && document.pointerLockElement !== renderer.domElement && !params.has('nolock')) lockPointer(); });
@@ -258,6 +259,8 @@ let hudT = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (walker.enabled) walker.update(dt); else orbit.update();
+  const climbShown = walker.enabled && walker.canClimb;
+  if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
   // far detail level: from far away the finished pyramid is a textured hull and the rooms are
   // skipped (a part-built pyramid keeps its section, cap and rooms)
   const far = !walker.enabled && monument.built === COURSE_COUNT && camera.position.distanceTo(orbit.target.clone().setY(50)) > 1500 && camera.position.length() > 1500;
