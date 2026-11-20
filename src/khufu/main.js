@@ -187,6 +187,14 @@ function setCourses(n) {
   const top = monument.setBuiltCourses(n);
   collision.topY = top;
   rooms.setSection(monument.built < COURSE_COUNT ? top + 0.001 : null);
+  // new masonry may have risen through the walker (standing on a lower cap): lift it to the
+  // nearest floor with room above, or leave walking if there is none
+  if (walker.enabled && !walker.passable(walker.pos.x, walker.pos.z, walker.pos.y)) {
+    const pitch = walker.pitch;
+    walker.teleport(walker.pos.clone(), walker.yaw);
+    walker.pitch = pitch;
+    if (!walker.passable(walker.pos.x, walker.pos.z, walker.pos.y)) setWalk(false);
+  }
   $('courseLabel').textContent = monument.built === COURSE_COUNT ? `all ${COURSE_COUNT}` : `${monument.built} · ${top.toFixed(1)} m`;
 }
 slider.addEventListener('input', () => setCourses(+slider.value));
@@ -250,8 +258,9 @@ let hudT = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
   if (walker.enabled) walker.update(dt); else orbit.update();
-  // far detail level: from far away the pyramid is a textured hull and the rooms are skipped
-  const far = !walker.enabled && camera.position.distanceTo(orbit.target.clone().setY(50)) > 1500 && camera.position.length() > 1500;
+  // far detail level: from far away the finished pyramid is a textured hull and the rooms are
+  // skipped (a part-built pyramid keeps its section, cap and rooms)
+  const far = !walker.enabled && monument.built === COURSE_COUNT && camera.position.distanceTo(orbit.target.clone().setY(50)) > 1500 && camera.position.length() > 1500;
   monument.setFar(far && !xray);
   rooms.group.visible = !(far && !xray);
   // inside, the open sky stops lighting things: only the torch remains

@@ -26,6 +26,9 @@ export class Walker {
     camera.add(this.torch);
     this.torch.position.set(0.18, 0.2, 0.3);
     window.addEventListener('keydown', (e) => {
+      // keys pressed in a form control (the course slider's arrows) are not movement
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
       this.keys[e.code] = true;
       if (e.code === 'Space' && this.enabled) { e.preventDefault(); this.tryClimb(CLIMB); }
     });

@@ -222,10 +222,8 @@ export class Monument {
     n = Math.max(0, Math.min(COURSE_COUNT, Math.round(n)));
     this.built = n;
     this.courses.geometry.setDrawRange(0, n > 0 ? this.ends[n - 1] : 0);
-    this.pyramidion.visible = n === COURSE_COUNT && !this.far;
-    const capped = n > 0 && n < COURSE_COUNT;
-    if (capped) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1); }
-    this.cap.visible = capped && !this.far;
+    if (n > 0 && n < COURSE_COUNT) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1); }
+    this.updateVisibility();
     return this.topY();
   }
   topY() { return this.built === COURSE_COUNT ? HEIGHT : this.built > 0 ? COURSES[this.built - 1].y1 : 0; }
@@ -234,10 +232,17 @@ export class Monument {
   setFar(far) {
     if (far === this.far) return;
     this.far = far;
-    this.hull.visible = far && this.built === COURSE_COUNT;
+    this.updateVisibility();
+  }
+
+  // The hull stands in only for the finished pyramid. A part-built one keeps its courses
+  // and the cap at any distance, since the hull would cover the section.
+  updateVisibility() {
+    const complete = this.built === COURSE_COUNT;
+    this.hull.visible = this.far && complete;
     this.courses.visible = !this.hull.visible;
-    this.pyramidion.visible = this.built === COURSE_COUNT && !this.hull.visible;
-    this.cap.visible = this.built > 0 && this.built < COURSE_COUNT && !far;
+    this.pyramidion.visible = complete && !this.hull.visible;
+    this.cap.visible = this.built > 0 && !complete;
   }
 
   setXray(on) {
