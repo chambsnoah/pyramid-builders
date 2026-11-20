@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite --port 5174 --strictPort",
     "build": "vite build",
-    "khufu:sim": "node scripts/khufu-sim.mjs"
+    "khufu:sim": "node scripts/khufu-sim.mjs",
+    "khufu:check": "node scripts/khufu-sim-check.mjs"
   },
   "dependencies": {
     "three": "0.170.0"

@@ -49,6 +49,22 @@ The first step toward simulating the Great Pyramid of Khufu at full size ([plan:
 | --- | --- | --- |
 | ![Entrance stair on the north face](media/khufu/entrance.jpg) | ![Grand Gallery](media/khufu/gallery.jpg) | ![King's Chamber](media/khufu/kings.jpg) |
 
+### The 20-year build as an event model (headless, Phase 2)
+
+`src/khufu/sim/` simulates the logistics of the whole build without graphics. It doesn't drive the page yet; Phase 3 will.
+
+```bash
+npm run khufu:sim                                  # full build, report in the terminal (~2.5 s)
+npm run khufu:sim -- --seed 7 --set haul.gangs=80  # other seeds and settings
+npm run khufu:check                                # determinism, snapshot replay and calibration checks
+```
+
+- **Discrete events, not ticks.** Quarry faces cut blocks; sled gangs haul them along a road graph to a ramp; ramp lanes, loading bays, landings and harbour berths are first-come-first-served resources with queues; setting crews lay them. Boats bring the Tura casing, yearly convoys the Aswan granite, and heavy gangs take the granite and the roof beams up a whole ramp width at a time.
+- **Courses are planned in sectors**, each with its own landing and crews, and blocks are set farthest-first from the landing. Room voids stay open, and the King's Chamber, relieving chambers, Grand Gallery and Queen's Chamber get their linings and roof beams as their courses pass.
+- **Ramp theory: straight ramps, then zigzags.** Up to 45 m a straight 1:8 ramp stands against each face. Above that the sleds climb those ramps, then switch back up the faces on 1:6 zigzags. Other theories plug into `src/khufu/sim/ramps/`.
+- **Time** is working time: days of 10 hours, years of 300 days. Every run with the same seed is identical, and the state is saved every simulated month so any day can be reached by restoring the month before it and replaying.
+- **Calibration:** with the defaults (`src/khufu/sim/params.js`), 2,295,833 blocks take 19.97 years, 38.3 blocks an hour, against the 38.3 of issue #1. The number of quarry crews is the main knob: quarrying limits the first 15 years, hauling up the zigzags the last few.
+
 ## Code map
 
 | File | What it does |
@@ -71,6 +87,8 @@ The first step toward simulating the Great Pyramid of Khufu at full size ([plan:
 | `src/khufu/rooms.js` | Khufu: room and passage linings cut from the volumes |
 | `src/khufu/collision.js`, `walker.js` | Khufu: sparse column collision and first-person walking |
 | `src/khufu/main.js` | Khufu: scene, X-ray, HUD, frame-rate measurement |
+| `src/khufu/sim/` | Khufu: headless 20-year event model (queue, resources, roads, planner, ramp theories, model) |
+| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs` | Khufu: run the model and check it |
 
 ## Making the video
 

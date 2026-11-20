@@ -15,7 +15,7 @@ export const DEFAULTS = {
 
   quarry: {
     at: [40, 480], // the main quarry, south of the pyramid (x east, z south)
-    faces: 375, // quarrying crews working at once (the main calibration knob: see README)
+    faces: 365, // quarrying crews working at once (the main calibration knob: see README)
     cutHours: 10, // hours for one crew to free a 1.2 m³ block (scaled by block volume)
     refVolume: 1.2,
     yardCap: 4000, // dressed blocks stacked in the quarry yard before faces stop
