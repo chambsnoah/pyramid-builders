@@ -15,9 +15,11 @@
 //   junction keeps to the passage you are in.
 import * as THREE from 'three';
 
-// MIN_CLIMB: a ledge must rise more than a step plus the most a 26° passage floor rises in
-// 0.85 m, or every sloping passage would look climbable
-const MIN_CLIMB = 0.55;
+// MIN_CLIMB: a ledge must rise more than the floor of a 26° passage does within the 0.85 m
+// that findClimb looks ahead (at most 0.42 m, 0.45 m beside the Grand Gallery's benches),
+// or every sloping passage would look climbable; and less than the 0.52 m step in the
+// Queen's Chamber passage, or that step can't be climbed at all
+const MIN_CLIMB = 0.48;
 const STAND = 1.75, EYE_DROP = 0.13, CRAWL = 0.8, STEP = 0.45, CLIMB = 2.2, AUTO_CLIMB = 1.0, PUSH_CLIMB = 0.3, NUDGE = 0.4, RADIUS = 0.24;
 
 export class Walker {
