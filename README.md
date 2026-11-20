@@ -41,7 +41,7 @@ Workers find paths on a navigation grid with A*, step aside for each other and q
 
 The first step toward simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://github.com/chambsnoah/pyramid-builders/issues/1)). It shows the finished monument, 230.3 m square and 146.6 m high, with 215 courses and a pyramidion. You can see through it in X-ray and walk through its interior. There is no construction simulation yet.
 
-- **Walk:** the buttons (or keys 1–6) jump to the north side, the entrance, the subterranean chamber, the Queen's Chamber, the Grand Gallery or the King's Chamber. You crouch automatically in the low passages. Press Space to climb up where one passage leaves through the roof of another.
+- **Walk:** the buttons (or keys 1–6) jump to the north side, the entrance, the subterranean chamber, the Queen's Chamber, the Grand Gallery or the King's Chamber. You crouch automatically in the low passages. Where one passage leaves through the roof of another (the ascending passage opens in the roof of the descending one), a "Space · climb up" prompt appears; press Space to scramble up. Walking into a ledge you can climb (the rock terraces in the subterranean chamber) climbs it after a moment, and walking into the wall beside a narrow doorway slides you into it.
 - **Courses:** the slider cuts the pyramid off at any course and shows the rooms in section.
 - The course heights are pinned to Petrie's levels for the thick courses (1883, sec. 146). The rooms and passages are placed from Petrie's survey and standard plans. `src/khufu/data.js` notes the sources and which figures are approximate.
 

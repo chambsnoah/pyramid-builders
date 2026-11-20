@@ -147,6 +147,12 @@ const ascFloor = (z) => QC_PASSAGE_Y + Math.tan(ASC_DEG * D) * (z - GALLERY_Z0);
 const descRoof = (z) => ceilY(descending, z);
 // where the ascending floor meets the descending roof (both linear in z)
 const ASC_Z0 = (() => { let lo = ENTRANCE_Z, hi = GALLERY_Z0; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (ascFloor(m) < descRoof(m)) lo = m; else hi = m; } return (lo + hi) / 2; })();
+// The ascending passage leaves through the roof of the descending one: the opening is where
+// its full height cuts the descending roof, from the floor junction (ASC_Z0) north to where
+// its ceiling meets that roof (ASC_OPEN_Z, about 1.4 m). North of ASC_Z0 its floor lies
+// inside the descending passage, so only the hole in the roof shows.
+const ascCeil = (z) => ascFloor(z) + PH / Math.cos(ASC_DEG * D);
+const ASC_OPEN_Z = (() => { let lo = ENTRANCE_Z, hi = ASC_Z0; for (let i = 0; i < 60; i++) { const m = (lo + hi) / 2; if (ascCeil(m) < descRoof(m)) lo = m; else hi = m; } return (lo + hi) / 2; })();
 
 // Upper end: great step, low passage, antechamber, low passage, King's Chamber.
 const Z_STEP = GAL_TOP.z + STEP_DEPTH; // south wall of the gallery
@@ -209,7 +215,7 @@ export const ELEMENTS = [
   {
     id: 'ascending', name: 'Ascending passage', material: 'limestone', joint: { w: 1.6, h: 0.6, mode: 'slope' },
     note: 'Left open through the courses as they rose; plugged with granite after the burial (plugs not modelled)',
-    voids: [slope(px0, px1, ASC_Z0 - OVERLAP, GALLERY_Z0 + OVERLAP, GALLERY_Z0, QC_PASSAGE_Y, ASC_DEG, PH)],
+    voids: [slope(px0, px1, ASC_OPEN_Z - OVERLAP, GALLERY_Z0 + OVERLAP, GALLERY_Z0, QC_PASSAGE_Y, ASC_DEG, PH)],
     label: [AXIS_X, 14, -58],
   },
   {
@@ -295,7 +301,7 @@ export const SPOTS = [
 // Key levels for the record (and for checks in the browser console).
 export const LEVELS = {
   entranceSill: ENTRANCE_Y, entranceZ: ENTRANCE_Z,
-  descendingBottom: DESC_BOTTOM, ascendingStartZ: ASC_Z0, ascendingStartY: ascFloor(ASC_Z0),
+  descendingBottom: DESC_BOTTOM, ascendingStartZ: ASC_Z0, ascendingStartY: ascFloor(ASC_Z0), ascendingOpeningZ: ASC_OPEN_Z,
   galleryFoot: { z: GALLERY_Z0, y: QC_PASSAGE_Y }, galleryTop: GAL_TOP, greatStepSouth: Z_STEP,
   queensChamber: QC, kingsChamber: KC, subterranean: SUB,
 };
