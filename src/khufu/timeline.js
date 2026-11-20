@@ -36,18 +36,40 @@ export const SPEEDS = [
   { k: 10 * DAY, label: '10 days/s' }, { k: MONTH, label: '1 month/s' }, { k: 3 * MONTH, label: '3 months/s' }, { k: YEAR, label: '1 year/s' },
 ];
 
-// The worker and its one-in-flight seek queue.
+// The worker and its one-in-flight seek queue. If the worker dies (out of memory, a script
+// error) it is started again and the build re-run, up to MAX_RESTARTS times; restart() does
+// the same on demand.
+const MAX_RESTARTS = 2;
 export class SimClient {
-  constructor({ onProgress, onReady, onState, onError }) {
-    this.cb = { onProgress, onReady, onState, onError };
-    this.worker = new Worker(new URL('./sim/worker.js', import.meta.url), { type: 'module' });
-    this.worker.onmessage = (e) => this.receive(e.data);
-    this.worker.onerror = (e) => onError?.(e.message || 'worker failed');
-    this.id = 0; this.busy = false; this.want = null; this.sentAt = 0; this.ready = false;
+  constructor({ onProgress, onReady, onState, onError, onRestart }) {
+    this.cb = { onProgress, onReady, onState, onError, onRestart };
+    this.id = 0; this.want = null; this.sentAt = 0; this.restarts = 0;
     this.waiters = [];
     this.last = { ms: 0, roundTrip: 0 };
+    this.overrides = {};
+    this.spawn();
   }
-  init(overrides = {}) { this.t0 = performance.now(); this.worker.postMessage({ type: 'init', overrides }); }
+  spawn() {
+    this.worker = new Worker(new URL('./sim/worker.js', import.meta.url), { type: 'module' });
+    this.worker.onmessage = (e) => this.receive(e.data);
+    this.worker.onerror = (e) => this.fail(e.message || 'worker failed');
+    this.busy = false; this.ready = false;
+  }
+  init(overrides = {}) { this.overrides = overrides; this.t0 = performance.now(); this.worker.postMessage({ type: 'init', overrides }); }
+  // throw the worker away and run the build again; the latest wanted time is kept and sent
+  // once the new worker is ready
+  restart() {
+    if (this.busy && this.want === null) this.want = this.sentT;
+    this.worker.terminate();
+    this.spawn();
+    this.cb.onRestart?.(this.restarts);
+    this.init(this.overrides);
+  }
+  fail(message) {
+    if (this.restarts < MAX_RESTARTS) { this.restarts++; console.warn('[khufu] worker failed, restarting:', message); this.restart(); return; }
+    this.busy = false;
+    this.cb.onError?.(message);
+  }
   seek(t) { this.want = t; this.pump(); }
   pump() {
     if (!this.ready || this.busy || this.want === null) return;
@@ -70,7 +92,7 @@ export class SimClient {
         return false;
       });
       this.pump();
-    } else if (m.type === 'error') { this.busy = false; this.cb.onError?.(m.message); }
+    } else if (m.type === 'error') this.fail(m.message);
   }
 }
 

@@ -14,8 +14,10 @@ export function inUseAt(R, t) { let n = 0; for (const v of R.nf) if (v > t) n++;
 
 const FACE = ['south', 'east', 'north', 'west'];
 export function laneName(key) {
-  const m = /^(straight|zigzag)(\d)$/.exec(key);
-  return m ? `${m[1] === 'straight' ? 'Straight' : 'Zigzag'} ramp, ${FACE[+m[2]]} face` : key;
+  const m = /^(straight|zigzag)(\d+)$/.exec(key);
+  if (!m) return key;
+  const face = FACE[+m[2]]; // a theory with more routes than faces just numbers them
+  return `${m[1] === 'straight' ? 'Straight' : 'Zigzag'} ramp, ${face ? `${face} face` : `route ${m[2]}`}`;
 }
 
 // A reusable model for one run that can be moved to any time. Forward within the month it is

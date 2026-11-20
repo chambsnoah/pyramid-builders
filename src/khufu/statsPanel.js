@@ -34,9 +34,17 @@ export class StatsPanel {
     this.el.toggle.onclick = () => this.setOpen(this.el.body.hidden);
     if (matchMedia('(max-width: 640px)').matches) this.setOpen(false);
     this.view = null;
-    const sp = this.el.spark;
-    sp.addEventListener('mousemove', (e) => this.hover(e));
-    sp.addEventListener('mouseleave', () => { this.el.tip.style.display = 'none'; });
+    this.onMove = (e) => this.hover(e);
+    this.onLeave = () => { this.el.tip.style.display = 'none'; };
+    this.el.spark.addEventListener('mousemove', this.onMove);
+    this.el.spark.addEventListener('mouseleave', this.onLeave);
+  }
+
+  destroy() {
+    this.el.spark.removeEventListener('mousemove', this.onMove);
+    this.el.spark.removeEventListener('mouseleave', this.onLeave);
+    this.el.toggle.onclick = null;
+    this.root.innerHTML = '';
   }
 
   setOpen(on) {

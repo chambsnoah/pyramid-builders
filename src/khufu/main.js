@@ -194,11 +194,12 @@ window.addEventListener('keydown', (e) => {
 // build height: finished courses as surfaces (and the capstone once it is set)
 const slider = $('courses');
 slider.max = COURSE_COUNT; slider.value = COURSE_COUNT;
+let shownCourses = null; // what setCourses last applied ("built:capstone"), so repeats are skipped
 function setCourses(n, capstone = true) {
-  const before = monument.built, cap = monument.capstone;
   const top = monument.setBuiltCourses(n, capstone);
-  if (monument.built === before && monument.capstone === cap && setCourses.done) return;
-  setCourses.done = true;
+  const shown = `${monument.built}:${monument.capstone}`;
+  if (shown === shownCourses) return; // the timeline calls this every frame while playing
+  shownCourses = shown;
   collision.topY = top;
   rooms.setSection(!monument.complete ? top + 0.001 : null);
   // new masonry may have risen through the walker (standing on a lower cap): lift it to the
@@ -233,13 +234,15 @@ const client = new SimClient({
     console.info(`[khufu] model ran in the worker in ${(timing.ms / 1000).toFixed(2)} s: ${summary.blocks} blocks, ${(summary.endT / YEAR).toFixed(2)} years, hash ${summary.hash}`);
     window.__khufu.summary = summary; window.__khufu.runMs = timing.ms;
     stats.setRun(summary);
+    const restarted = timeline.ready; // the worker was restarted after a crash: stay where we were
     timeline.setRun(summary);
     let t = summary.endT; // by default, the finished monument (as before the model has run)
-    if (params.has('day')) t = (+params.get('day') - 1) * DAY;
+    if (restarted) t = timeline.t;
+    else if (params.has('day')) t = (+params.get('day') - 1) * DAY;
     else if (params.has('year')) t = (+params.get('year') - 1) * YEAR;
     else if (params.has('courses')) { const n = +params.get('courses'); t = n >= COURSE_COUNT ? summary.endT : summary.courseDone[Math.max(0, n - 1)]; }
     timeline.seek(t);
-    if (params.has('play')) timeline.setPlaying(true);
+    if (params.has('play') && !restarted) timeline.setPlaying(true);
   },
   onState: (m, timing) => {
     if ('layout' in m) working.setLayout(m.layout);
@@ -248,6 +251,7 @@ const client = new SimClient({
     working.update(view.course);
     stats.update(view, m.t, timing);
   },
+  onRestart: (n) => { timeline.setEnabled(false); timeline.setPlaying(false); timeline.setProgress(`The event model stopped; running it again (attempt ${n + 1})…`); },
   onError: (msg) => { console.error('[khufu] worker:', msg); timeline.setProgress('The event model failed to run (see the console)'); },
 });
 client.init();
