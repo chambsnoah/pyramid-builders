@@ -282,15 +282,20 @@ export const ELEMENTS = [
 export const STAIR = { x0: AXIS_X - 1.05, x1: AXIS_X + 1.05, landing: 1.6, deg: 35, rise: 0.25 };
 STAIR.zTop = ENTRANCE_Z - STAIR.landing;
 STAIR.zFoot = STAIR.zTop - ENTRANCE_Y / Math.tan(STAIR.deg * D);
+const STAIR_TAN = Math.tan(STAIR.deg * D), STAIR_RAIL = 1.0; // invisible rail height above the steps
 export const STAIR_SOLIDS = [
   // collision: a smooth ramp under the steps and the landing in front of the entrance
-  { x0: STAIR.x0, x1: STAIR.x1, z0: STAIR.zFoot, z1: STAIR.zTop, floor: [-1, 0], ceil: [[-Math.tan(STAIR.deg * D) * STAIR.zFoot, Math.tan(STAIR.deg * D)]] },
+  { x0: STAIR.x0, x1: STAIR.x1, z0: STAIR.zFoot, z1: STAIR.zTop, floor: [-1, 0], ceil: [[-STAIR_TAN * STAIR.zFoot, STAIR_TAN]] },
   box(STAIR.x0, STAIR.x1, STAIR.zTop, ENTRANCE_Z + 0.05, -1, ENTRANCE_Y - 0.01),
+  // invisible rails along both sides, so walking up at an angle slides along the edge
+  // instead of stepping off it (the lower flight stands over the open ground)
+  ...[[STAIR.x0 - 0.2, STAIR.x0], [STAIR.x1, STAIR.x1 + 0.2]].map(([x0, x1]) =>
+    ({ x0, x1, z0: STAIR.zFoot, z1: STAIR.zTop, floor: [-1, 0], ceil: [[-STAIR_TAN * STAIR.zFoot + STAIR_RAIL, STAIR_TAN]] })),
 ];
 
 // Places to jump to when walking: position of the feet and the heading (yaw 0 = north, π = south).
 export const SPOTS = [
-  { key: 'outside', name: 'North side', pos: [AXIS_X - 3, 0, STAIR.zFoot - 9], yaw: Math.PI + 0.25 },
+  { key: 'outside', name: 'North side', pos: [AXIS_X, 0, STAIR.zFoot - 9], yaw: Math.PI }, // facing straight up the stair
   { key: 'entrance', name: 'Entrance', pos: [AXIS_X, ENTRANCE_Y, ENTRANCE_Z - 0.9], yaw: Math.PI },
   { key: 'subterranean', name: 'Subterranean chamber', pos: [5.6, SUB_FLOOR, SUB.z0 + 1.5], yaw: Math.PI / 2 + 0.5 },
   { key: 'queen', name: "Queen's Chamber", pos: [6.6, QC.y0, QC.z0 + 0.8], yaw: Math.PI * 0.75 },

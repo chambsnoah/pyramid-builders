@@ -10,7 +10,8 @@
 //   CLIMB after pushing against them for PUSH_CLIMB seconds. `canClimb` says whether Space
 //   would do anything here, for an on-screen prompt.
 // - Narrow doorways (0.85 m) are hard to line up with: walking into a wall next to an
-//   opening slides the body sideways into it (up to NUDGE).
+//   opening slides the body sideways into it (up to NUDGE: enough to reach the entrance
+//   from either edge of the access stair).
 // - Of several floors within reach, the one nearest the feet is taken, so walking past a
 //   junction keeps to the passage you are in.
 import * as THREE from 'three';
@@ -20,7 +21,7 @@ import * as THREE from 'three';
 // or every sloping passage would look climbable; and less than the 0.52 m step in the
 // Queen's Chamber passage, or that step can't be climbed at all
 const MIN_CLIMB = 0.48;
-const STAND = 1.75, EYE_DROP = 0.13, CRAWL = 0.8, STEP = 0.45, CLIMB = 2.2, AUTO_CLIMB = 1.0, PUSH_CLIMB = 0.3, NUDGE = 0.4, RADIUS = 0.24;
+const STAND = 1.75, EYE_DROP = 0.13, CRAWL = 0.8, STEP = 0.45, CLIMB = 2.2, AUTO_CLIMB = 1.0, PUSH_CLIMB = 0.3, NUDGE = 0.6, RADIUS = 0.24;
 
 export class Walker {
   constructor(camera, dom, collision) {
@@ -67,7 +68,10 @@ export class Walker {
     let best = null;
     for (let i = 0; i < s.length; i++) {
       const f = s[i].y1, c = i + 1 < s.length ? s[i + 1].y0 : Infinity;
-      if (!s[i].walk && f > feet + 0.03) continue; // can't climb the casing
+      // the casing is too steep and smooth to stand on: it only counts within a few cm of
+      // the feet (where it meets the landing at the entrance sill), so the body can't climb
+      // it, nor hang over the edge of the access stair or a part-built course
+      if (!s[i].walk && Math.abs(f - feet) > 0.03) continue;
       if (c - f < CRAWL || f > feet + step) continue;
       // there must be room for a crouched body at the height it moves in, unless it is
       // dropping into an opening that starts at its feet
@@ -185,18 +189,26 @@ export class Walker {
   }
 
   // walking into a wall beside an opening: slide sideways toward the nearest spot (within
-  // NUDGE) from which the body can carry on in the direction it wants to go
-  nudge(want, step) {
-    const px = -want.z, pz = want.x, ahead = 0.1, feet = this.pos.y;
+  // NUDGE) from which the body can carry on. Two ways to slide: square to the wanted
+  // direction, and straight along the wall that stopped it (bx / bz: the x / z step was
+  // refused). Walking at an angle into a face, sliding square to the heading also moves
+  // into the face, so only the slide along the wall gets to a doorway in it.
+  nudge(want, step, bx = false, bz = false) {
+    const ahead = 0.1, feet = this.pos.y;
+    const ways = [[-want.z, want.x, want.x, want.z]]; // slide x, z; then check ahead along x, z
+    if (bz && !bx) ways.push([1, 0, 0, Math.sign(want.z)]);
+    if (bx && !bz) ways.push([0, 1, Math.sign(want.x), 0]);
     for (let o = 0.05; o <= NUDGE + 1e-6; o += 0.05) {
-      for (const sgn of [1, -1]) {
-        const x = this.pos.x + px * o * sgn, z = this.pos.z + pz * o * sgn;
-        if (!this.passable(x, z, feet) || !this.passable(x + want.x * ahead, z + want.z * ahead, feet)) continue;
-        // every point on the way there must be clear too
-        const k = Math.min(1, step / o), mx = this.pos.x + px * o * sgn * k, mz = this.pos.z + pz * o * sgn * k;
-        if (!this.passable(mx, mz, feet)) continue;
-        this.pos.x = mx; this.pos.z = mz;
-        return true;
+      for (const [px, pz, ax, az] of ways) {
+        for (const sgn of [1, -1]) {
+          const x = this.pos.x + px * o * sgn, z = this.pos.z + pz * o * sgn;
+          if (!this.passable(x, z, feet) || !this.passable(x + ax * ahead, z + az * ahead, feet)) continue;
+          // every point on the way there must be clear too
+          const k = Math.min(1, step / o), mx = this.pos.x + px * o * sgn * k, mz = this.pos.z + pz * o * sgn * k;
+          if (!this.passable(mx, mz, feet)) continue;
+          this.pos.x = mx; this.pos.z = mz;
+          return true;
+        }
       }
     }
     return false;
@@ -212,13 +224,16 @@ export class Walker {
     const dir = new THREE.Vector3(-Math.sin(this.yaw) * fwd + Math.cos(this.yaw) * str, 0, -Math.cos(this.yaw) * fwd - Math.sin(this.yaw) * str);
     if (dir.lengthSq() > 0) dir.normalize().multiplyScalar(speed);
     this.vel.lerp(dir, Math.min(1, dt * 10));
-    let blocked = false;
+    let blocked = false, bx = false, bz = false;
     const want = dir.lengthSq() > 0 ? dir.clone().normalize() : null;
     const nx = this.pos.x + this.vel.x * dt;
-    if (this.passable(nx, this.pos.z, this.pos.y)) this.pos.x = nx; else { blocked = blocked || Math.abs(this.vel.x) > 0.3; this.vel.x = 0; }
+    // blocked: a step the player is asking for was refused. Judged on the wanted direction,
+    // not the velocity, which restarts from 0 after every refusal and never builds up to a
+    // threshold when crouched (so the body was never nudged into the antechamber passage)
+    if (this.passable(nx, this.pos.z, this.pos.y)) this.pos.x = nx; else { bx = want !== null && Math.abs(want.x) > 0.3; blocked ||= bx; this.vel.x = 0; }
     const nz = this.pos.z + this.vel.z * dt;
-    if (this.passable(this.pos.x, nz, this.pos.y)) this.pos.z = nz; else { blocked = blocked || Math.abs(this.vel.z) > 0.3; this.vel.z = 0; }
-    if (blocked && want) this.nudge(want, speed * dt);
+    if (this.passable(this.pos.x, nz, this.pos.y)) this.pos.z = nz; else { bz = want !== null && Math.abs(want.z) > 0.3; blocked ||= bz; this.vel.z = 0; }
+    if (blocked && want) this.nudge(want, speed * dt, bx, bz);
     this.push = blocked && fwd > 0 ? this.push + dt : 0;
     if (blocked && fwd > 0 && (this.tryClimb(AUTO_CLIMB) || (this.push > PUSH_CLIMB && this.tryClimb(CLIMB, 1)))) return;
     const s = this.support(this.pos.x, this.pos.z, this.pos.y);
