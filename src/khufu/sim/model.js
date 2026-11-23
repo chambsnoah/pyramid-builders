@@ -40,9 +40,13 @@ const CUT = 1, AT_FOOT = 2, UNLOADED = 3, AT_SOURCE = 4, SET_DONE = 5, BOAT_DEPA
 // gang kinds and tasks
 export const GIZA = 0, TURA = 1, HEAVY = 2;
 export const TASK = { WAITING: 0, OUT: 1, RETURNING: 2 };
-// per-gang timeline of the current trip (seconds), for interpolating positions later
-export const T = { START: 0, DEPART: 1, FOOT: 2, CLIMB: 3, TOP: 4, LAND: 5, UNLOAD: 6, DONE: 7, HOME: 8, WAIT: 9 };
-const NT = 10;
+// per-gang timeline of the current trip (seconds), read by the detail bubble (sim/gangs.js)
+// to place each gang along its route. ARR1 / ENT1: arrival at the top of the first ramp
+// segment and entry onto the second (the zigzag), so the wait between them is known; with a
+// single segment both equal TOP. These two are written only for drawing: no event or random
+// draw depends on them, so they leave the build (and its hash) unchanged.
+export const T = { START: 0, DEPART: 1, FOOT: 2, CLIMB: 3, TOP: 4, LAND: 5, UNLOAD: 6, DONE: 7, HOME: 8, WAIT: 9, ARR1: 10, ENT1: 11 };
+export const NT = 12;
 
 const SEC_BITS = 1024; // event arg a = course × SEC_BITS + sector
 
@@ -231,7 +235,9 @@ export function createModel(overrides = {}) {
       const seg = route.segs[i];
       const entry = acquire(lane(seg), t, seg.headway);
       if (i === 0) G.t[tb + T.CLIMB] = entry;
+      if (i === 1) G.t[tb + T.ENT1] = entry;
       t = entry + seg.length / ((P.haul.vLoaded / (1 + P.haul.climbK * seg.grade)) * jv) + seg.turns * seg.turnTime;
+      if (i === 0) G.t[tb + T.ARR1] = G.t[tb + T.ENT1] = t;
     }
     G.t[tb + T.TOP] = t;
     t += sec.top / (P.haul.vLoaded * jv);
@@ -324,7 +330,9 @@ export function createModel(overrides = {}) {
       const climb = seg.length / ((P.haul.vLoaded * P.heavy.speedFactor / (1 + P.haul.climbK * seg.grade)) * jv) + seg.turns * seg.turnTime * 2;
       const entry = acquireAll(lane(seg), t, climb); // the whole ramp width, for the whole climb
       if (i === 0) G.t[tb + T.CLIMB] = entry;
+      if (i === 1) G.t[tb + T.ENT1] = entry;
       t = entry + climb;
+      if (i === 0) G.t[tb + T.ARR1] = G.t[tb + T.ENT1] = t;
     }
     G.t[tb + T.TOP] = t;
     t += it.top / (P.haul.vLoaded * P.heavy.speedFactor * jv);

@@ -8,7 +8,7 @@
 import { COURSES, HALF, TAN, halfWidthAt } from '../../data.js';
 
 // face 0 S (+z), 1 E (+x), 2 N (−z), 3 W (−x): outward normal and the direction along the face
-const FACES = [[[0, 1], [1, 0]], [[1, 0], [0, -1]], [[0, -1], [-1, 0]], [[-1, 0], [0, 1]]];
+export const FACES = [[[0, 1], [1, 0]], [[1, 0], [0, -1]], [[0, -1], [-1, 0]], [[-1, 0], [0, 1]]];
 
 export function createStraightZigzag(p) {
   const S = p.straight, Z = p.zigzag;
