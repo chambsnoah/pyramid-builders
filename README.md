@@ -44,6 +44,7 @@ Simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://git
 - **Timeline in years:** play and pause, set the speed (from 1× real working time to a year a second), step a day or a month either way (←/→, Shift for a month), or drag to any working day. The clock shows the year of the build, the season and month (Akhet, Peret, Shemu), the day and the hour. Diamonds on the timeline mark milestones, such as the Queen's Chamber and King's Chamber roofed, the Grand Gallery complete, the ramps switching to zigzags and the capstone set; click one to jump there. On load the page shows the finished monument; `?year=9` or `?day=1500` opens at another time, and `&play` starts playing.
 - **The build, course by course:** the finished courses are drawn as surfaces and the course being laid block by block, with the stones being levered into place in gold, all read from the event model at the time on the timeline.
 - **Statistics:** blocks set, blocks per working day (with a chart of the whole build), workers on site and the sled gangs out, coming back or waiting, the quarry yard and the casing on the quay, and the longest queues right now on the ramps, landings, berths and loading bays.
+- **The sled gangs:** all 112 gangs of the event model are on the plateau at the time shown. They load at the quarry or the quay, haul along the roads, queue at the ramp foot, climb the straight ramps and the zigzags, wait for a berth on the landing, unload, and walk back. Near the camera (within about 120 m, up to 1,500 people) each gang is drawn as articulated workers on ropes, with water pourers and levermen. Farther out, up to 700 m, they are simple figures, and every sled and stone is always drawn. Once the capstone is set the gangs go home and are no longer shown. **Follow** (G) keeps the camera on the working gang nearest the middle of the view.
 
 - **Walk:** the buttons (or keys 1–6) jump to the north side, the entrance, the subterranean chamber, the Queen's Chamber, the Grand Gallery or the King's Chamber. You crouch automatically in the low passages. Where one passage leaves through the roof of another (the ascending passage opens in the roof of the descending one), a "Space · climb up" prompt appears; press Space to scramble up. Walking into a ledge you can climb (the rock terraces in the subterranean chamber) climbs it after a moment, and walking into the wall beside a narrow doorway slides you into it.
 - **Courses:** the slider jumps to the day any course was finished and shows the rooms in section.
@@ -62,6 +63,7 @@ npm run khufu:sim                                  # full build, report in the t
 npm run khufu:sim -- --seed 7 --set haul.gangs=80  # other seeds and settings
 npm run khufu:check                                # determinism, snapshot replay and calibration checks
 npm run khufu:seek                                 # seek times and exactness, as the timeline seeks
+npm run khufu:gangs                                # gang placement: continuity, queues, model match
 ```
 
 - **Discrete events, not ticks.** Quarry faces cut blocks; sled gangs haul them along a road graph to a ramp; ramp lanes, loading bays, landings and harbour berths are first-come-first-served resources with queues; setting crews lay them. Boats bring the Tura casing, yearly convoys the Aswan granite, and heavy gangs take the granite and the roof beams up a whole ramp width at a time.
@@ -69,6 +71,28 @@ npm run khufu:seek                                 # seek times and exactness, a
 - **Ramp theory: straight ramps, then zigzags.** Up to 45 m a straight 1:8 ramp stands against each face. Above that the sleds climb those ramps, then switch back up the faces on 1:6 zigzags. Other theories plug into `src/khufu/sim/ramps/`.
 - **Time** is working time: days of 10 hours, years of 300 days. Every run with the same seed is identical, and the state is saved every simulated month so any day can be reached by restoring the month before it and replaying.
 - **Calibration:** with the defaults (`src/khufu/sim/params.js`), 2,295,833 blocks take 19.97 years, 38.3 blocks an hour, against the 38.3 of issue #1. The number of quarry crews is the main knob: quarrying limits the first 15 years, hauling up the zigzags the last few.
+
+### The detail bubble
+
+The worker sends each gang's current trip with every reply, but only when it has changed. A trip is a few 3D paths (yard, road, ramp, landing and back) and a list of knots taken from the model's events (`src/khufu/sim/gangs.js`). Every frame the page places the sled, the stone and each member of the crew as a pure function of the trip and the time (`src/khufu/bubble.js`). So a gang stands in the same place however it is drawn, and crossing the edge of the bubble only changes how much detail it has.
+
+- **Model times are kept:**
+  - The time a gang reaches each place where it waits or arrives comes from the model: the ramp foot, the top of the straight ramp and the landing.
+  - The time in between is shared out over the drawn stretches by length and slope.
+  - Where the drawn ramp is longer than the model's (a course-0 ramp has no length in the model), a gang may reach the landing a little late, at no more than 30% above the model's speed. It still finishes unloading at the model's time.
+- **Queues:**
+  - Gangs queue one gang length apart at the ramp foot, the zigzag entry and each landing berth, and move up as the gang ahead leaves.
+  - Gangs climb in the ramp lane the model gave them, keep to the middle on the single-lane zigzag, and use two berths side by side at each landing.
+- **Ramps as drawn:**
+  - The straight ramps are raised in 2 cm lifts as each course is laid, so gangs on them never jump a course height.
+  - The zigzag is one fixed ledge per face up to the apex. Each switchback takes its share of the model's turning time.
+- **Known limitation:** the model lets a faster gang catch up with a slower one in the same lane, and two gangs can turn at the same switchback. They are then drawn overlapping, about 1% of the gangs at work at any moment.
+
+```bash
+npm run khufu:gangs   # continuity (nobody moves faster than a run between 1 s steps), model match, overlap
+```
+
+With the bubble full (74 gangs, 1,480 articulated workers), a frame takes 11 ms (p95 16 ms), 3.2 ms of it placing the gangs. That is at 2048×1536 on an Apple M3, measured with the GPU synced (`__khufu.benchFrames()`).
 
 ## Code map
 
@@ -83,7 +107,7 @@ npm run khufu:seek                                 # seek times and exactness, a
 | `src/core.js` | Paths, cooperative behaviours (generators), seeded random |
 | `src/pyramid.js` | Instanced stones, X-ray, rock and timber meshes |
 | `src/world.js` | Terrain, river, harbour, quarry, storehouse, camp |
-| `src/workers.js` | Instanced crowd with poses and carried items |
+| `src/workers.js` | Instanced crowd with poses and carried items (a worker can also be driven from outside, as the Khufu gangs are) |
 | `src/fps.js` | First-person walking and collision |
 | `src/tour.js` | Guided tour script and caption overlay |
 | `src/main.js` | Renderer, HUD, timeline, inspect, tour recorder |
@@ -97,7 +121,9 @@ npm run khufu:seek                                 # seek times and exactness, a
 | `src/khufu/working.js` | Khufu: the course being laid, one instanced block per stone set |
 | `src/khufu/sim/` | Khufu: 20-year event model (queue, resources, roads, planner, ramp theories, model) |
 | `src/khufu/sim/view.js`, `worker.js` | Khufu: what the page reads from the model at a time (panels, course layout, milestones, seeking), and the worker that runs it |
-| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs` | Khufu: run the model, check it, time seeks |
+| `src/khufu/sim/gangs.js` | Khufu: each sled gang's trip (paths, knots, queues) from the model, ramps as drawn, and where every person stands at any time |
+| `src/khufu/bubble.js` | Khufu: the detail bubble: sleds, stones, articulated workers near the camera, simple figures farther out, ramps |
+| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs`, `khufu-gangs.mjs` | Khufu: run the model, check it, time seeks, check the gangs |
 
 ## Making the video
 

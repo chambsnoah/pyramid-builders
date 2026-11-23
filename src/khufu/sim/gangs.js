@@ -29,11 +29,19 @@
 //    its own bed. Gangs pause at each switchback for the model's turning time.
 // Times between knots come from the model; the drawn paths are only used for shape, so a
 // path a few metres longer or shorter than the model's road just changes the drawn speed.
+// Queues (at the ramp foot, the zigzag entry and each landing berth) are part of a trip too:
+// who is ahead of the gang and when each leaves is read from the model (see capOf). Gangs
+// keep to lanes: on the roads by their number, on a straight ramp the lane the model gave
+// them, in the middle of the single-lane zigzag, and to their berth at the landing.
 import { HALF, HEIGHT, TAN, COURSES, halfWidthAt, groundHeight } from '../data.js';
 import { T, NT, TASK, GIZA, TURA, HEAVY, LAST } from './model.js';
 import { roadNetwork } from './roads.js';
 import { FACES } from './ramps/straightZigzag.js';
 
+// lane offsets (m to the left of travel) of the two lanes of a road or straight ramp
+const LANES = [1.4, 3.6];
+// berths of a landing, to the left (+) and right (−) of the way in
+const BERTH = [2.4, -2.4];
 // what a gang is doing between two knots
 export const ACT = { IDLE: 0, LOAD: 1, HAUL: 2, WAIT: 3, TURN: 4, UNLOAD: 5, RETURN: 6, WALK: 7, SET: 8 };
 export const ACT_NAME = ['idle', 'loading', 'hauling', 'waiting', 'turning', 'unloading', 'returning', 'walking', 'setting'];
@@ -319,13 +327,83 @@ function loadOf(plan, kind, sector) {
   return [plan.cell * 0.96, plan.h * 0.97, plan.cell * 0.96, 2];
 }
 
+// ---- queues ----------------------------------------------------------------------------
+// The model queues gangs at the foot of a straight ramp (for one of its lanes), at the entry
+// of a zigzag and at each landing berth. A queue is drawn as a line along the gang's own
+// path: a gang may not come closer to the waiting point than the length of every gang still
+// ahead of it, and moves up (at a slow walk) as each one leaves. Who is ahead, and when it
+// leaves, is read from the model, so a gang's place in a queue is part of its trip:
+//   cap = { li, t0, t1, s, h: [length, in, out, τ, …] }
+// for t0 ≤ t < t1 the gang is no farther along path li than s − Σ length·c(t), where each
+// gang ahead counts c = (eased in over τ from `in`) × (eased out over τ from `out`), τ being
+// the time to move up one gang length.
+// At the foot, the gangs ahead are those that reach it first (the model serves the foot
+// first come, first served), counted from just before they arrive until they enter the lane
+// (for good while that is not known yet), so news about them only ever changes the future:
+// a gang's arrival is known from the moment it sets off, and when it will enter the lane from
+// the moment it arrives. Gangs keep to their own road lane there (two lines); heavy gangs,
+// which take the whole ramp, count in both.
+const QV = 0.5; // m/s moving up in a queue
+const QGAP = 2.5; // m between two gangs in a queue
+function gangLength(kind, crew, load) {
+  const spec = crewSpec(kind, crew), lead = (load ? load[2] / 2 : 0.7) + (kind === HEAVY ? 1.6 : 0.9);
+  return lead + spec.ranks * spec.gap + lead * 0.9 + 0.5 + QGAP;
+}
+function queueIndex(sim, plans) {
+  const S = sim.state, P = sim.P, G = S.gang, now = S.t;
+  const foot = new Map(), zig = new Map(), land = new Map();
+  const add = (m, k, v) => { let a = m.get(k); if (!a) m.set(k, (a = [])); a.push(v); };
+  for (let h = 0; h < G.kind.length; h++) {
+    // (a gang that has just unloaded still counts while the one behind it moves up)
+    if (G.task[h] === TASK.WAITING || G.course[h] < 0) continue;
+    const tb = h * NT, c = G.course[h], plan = plans(c), kind = G.kind[h], heavy = kind === HEAVY;
+    const rt = plan.layout.routes[G.route[h]];
+    const len = gangLength(kind, heavy ? P.heavy.crew : P.haul.crew, loadOf(plan, kind, G.sector[h]));
+    const known = G.t[tb + T.FOOT] <= now;
+    add(foot, rt.segs[0].res, { h, at: G.t[tb + T.FOOT], out: known ? G.t[tb + T.CLIMB] : Infinity, len, line: heavy ? -1 : h % 2 });
+    if (!known) continue;
+    if (rt.segs.length > 1) add(zig, rt.segs[1].res, { h, at: G.t[tb + T.ARR1], serve: G.t[tb + T.ENT1], out: G.t[tb + T.ENT1], len });
+    if (!heavy) add(land, `${c}:${G.sector[h]}:${G.berth[h]}`, { h, at: G.t[tb + T.LAND], serve: G.t[tb + T.UNLOAD], out: G.t[tb + T.DONE], len });
+  }
+  return { foot, zig, land, now };
+}
+// the cap for gang g in queue list `q` (entries ahead: `ahead(e)`), from t0 to t1, on path li
+// below arc length s; eased in from each entry's arrival when `fromArrival`
+// (each counted in over τ ending at its arrival `at`)
+function capOf(Q, q, g, ahead, li, t0, t1, s) {
+  const h = [];
+  for (const e of q || []) {
+    if (e.h === g || !ahead(e)) continue;
+    // kept even once its effect is over: the gang's own times (when it climbs, when it
+    // unloads) are worked out from the whole list, so the list must not shrink under it
+    const tau = e.len / QV;
+    h.push(e.len, e.at - tau, e.out, tau);
+  }
+  return h.length ? { li, t0, t1, s, h } : null;
+}
+// how far back from cap.s the gang has to stay at time t
+export function capBack(cap, t) {
+  const h = cap.h;
+  let d = 0;
+  for (let i = 0; i < h.length; i += 4) {
+    const tau = h[i + 3];
+    const cin = smooth((t - h[i + 1]) / tau);
+    const cout = h[i + 2] === Infinity ? 1 : 1 - smooth((t - h[i + 2]) / tau);
+    d += h[i] * cin * cout;
+  }
+  return d;
+}
+const capEnd = (cap) => { let e = -Infinity; for (let i = 0; i < cap.h.length; i += 4) e = Math.max(e, cap.h[i + 2] + cap.h[i + 3]); return e; };
+
 // One gang's trip at the model's current time (see the top of the file). Plain data:
 //   { g, kind, crew, lane, sig, paths: [Float32Array | index of a path to reverse], knots: Float64Array(KN·k), load }
-function tripOf(sim, R, plans, g) {
+function tripOf(sim, R, plans, g, Q) {
   const S = sim.state, P = sim.P, G = S.gang, tb = g * NT, tt = (k) => G.t[tb + k];
   const kind = G.kind[g], task = G.task[g], now = S.t;
   const crew = kind === HEAVY ? P.heavy.crew : P.haul.crew;
-  const lane = kind === HEAVY ? 0 : g % 2 ? 2.4 : 0.9;
+  // lanes to the left of the way travelled: on the roads by the gang's number, on the straight
+  // ramp the lane the model gave it (heavy gangs take the whole width, in the middle)
+  const lane = kind === HEAVY ? 0 : LANES[g % 2];
   const y = yard(P, kind === GIZA ? GIZA : TURA, yardIndex(P, g, kind));
   const idle = idlePath(R, y);
   const Li = new Line(idle).L;
@@ -341,7 +419,6 @@ function tripOf(sim, R, plans, g) {
   const heavy = kind === HEAVY, item = heavy ? plan.heavy[sector] : null;
   const end = heavy ? [item.x, item.z] : plan.sectors[sector].landing;
   const climbKnown = tt(T.FOOT) <= now;
-  const sig = [task, G.trips[g], c, route, sector, R.key, climbKnown ? 1 : 0, tt(T.START), tt(T.FOOT), climbKnown ? tt(T.TOP) : 0, task === TASK.RETURNING ? tt(T.HOME) : 0].join('|');
 
   // paths: 0 idle, 1 way out, 2 way back (reverse of 1, or of a way out from the harbour for
   // heavy gangs that loaded limestone at the quarry), 3 walk from the quay to the quarry
@@ -364,43 +441,88 @@ function tripOf(sim, R, plans, g) {
     knot(tt(T.START), ACT.LOAD, 0, Li, 1, 0);
   }
   knot(tt(T.DEPART), ACT.HAUL, 1, 0, 1, out.sFoot);
+  // queues (see capOf): at the foot, and once the climb is known at the zigzag and the berth
+  const rt = plan.layout.routes[route];
+  const caps = [];
+  const line = heavy ? -1 : g % 2;
+  const footCap = capOf(Q, Q.foot.get(rt.segs[0].res), g, (e) => (e.at < tt(T.FOOT) || (e.at === tt(T.FOOT) && e.h < g)) && (line < 0 || e.line < 0 || e.line === line),
+    1, tt(T.DEPART), climbKnown ? tt(T.CLIMB) : Infinity, out.sFoot);
+  if (footCap) caps.push(footCap);
+  // where a queue holds the gang at time t (s: where it would be without it)
+  const capAt = (cap, s, t) => (cap ? Math.min(s, cap.s - capBack(cap, t)) : s);
   if (!climbKnown) {
     knot(tt(T.FOOT), ACT.WAIT, 1, out.sFoot, 1, out.sFoot);
   } else {
+    // Up the ramp. The model's own times are kept wherever the gang waits or arrives: at the
+    // foot (queueing for the lane), at the top of the straight ramp (queueing for the zigzag)
+    // and on the landing. The drawn ramps are not the model's to the metre (the zigzag is one
+    // fixed path, a course-0 ramp has no length in the model but a few metres drawn), so the
+    // time between two of those moments is shared out over the drawn stretches by their
+    // length at the model's speed on each (slower on a slope), plus the switchback pauses.
+    // That keeps every drawn speed close to the model's and never makes a stretch instant.
     knot(tt(T.FOOT), ACT.WAIT, 1, out.sFoot, 1, out.sFoot);
-    knot(tt(T.CLIMB), ACT.HAUL, 1, out.sFoot, 1, out.sSwitch);
-    const rt = plan.layout.routes[route];
-    if (out.sHead > out.sSwitch + 1e-6 || rt.segs.length > 1) {
+    const H = P.haul, vOf = (seg) => 1 / (1 + H.climbK * seg.grade); // relative speeds
+    const zig = rt.segs.length > 1;
+    // [from s, to s, relative speed] for each stretch, and the switchbacks on the zigzag
+    const run = (t0, t1, parts, pauseAll = 0, corners = []) => {
+      const nc = corners.length, pause = nc ? Math.min((t1 - t0) * 0.6, pauseAll) / nc : 0;
+      const w = parts.map(([a, b, v]) => Math.max(0, b - a) / v), W = w.reduce((x, y) => x + y, 0);
+      const travel = Math.max(0, t1 - t0 - pause * nc);
+      let t = t0;
+      parts.forEach(([a, b], i) => {
+        const dur = W > 0 ? (travel * w[i]) / W : travel / parts.length;
+        const cs = corners.filter((c) => c > a + 1e-6 && c < b - 1e-6);
+        if (!cs.length || b <= a) { knot(t, ACT.HAUL, 1, a, 1, b); t += dur; return; }
+        let s = a;
+        for (const c of [...cs, b]) {
+          const d = (dur * (c - s)) / (b - a);
+          knot(t, ACT.HAUL, 1, s, 1, c); t += d;
+          if (c < b) { knot(t, ACT.TURN, 1, c, 1, c); t += pause; }
+          s = c;
+        }
+      });
+    };
+    let t0, parts, pauseAll = 0;
+    // the climb starts from where the queue at the foot left the gang
+    const sClimb = capAt(footCap, out.sFoot, tt(T.CLIMB));
+    if (zig) {
+      run(tt(T.CLIMB), tt(T.ARR1), [[sClimb, out.sFoot, 1], [out.sFoot, out.sSwitch, vOf(rt.segs[0])]]);
       knot(tt(T.ARR1), ACT.WAIT, 1, out.sSwitch, 1, out.sSwitch);
-      // the zigzag: the model's time on it is travel plus turns × turnTime (twice for heavy
-      // gangs); the same total pause is shared between the switchbacks drawn on the way
+      // the queue for the zigzag (one lane, served in the model's order)
+      const ent = tt(T.ENT1);
+      const zcap = capOf(Q, Q.zig.get(rt.segs[1].res), g, (e) => e.serve < ent || (e.serve === ent && e.h < g), 1, tt(T.CLIMB), ent, out.sSwitch);
+      if (zcap) caps.push(zcap);
+      const sZig = capAt(zcap, out.sSwitch, ent);
+      // the model's time on the zigzag includes turns × turnTime (twice for heavy gangs);
+      // the same total pause is shared between the switchbacks drawn on the way
       const seg = rt.segs[1];
-      const D = tt(T.TOP) - tt(T.ENT1);
-      const pauseAll = seg ? Math.min(D * 0.9, seg.turns * seg.turnTime * (heavy ? 2 : 1)) : 0;
-      const nc = out.corners.length, pause = nc ? pauseAll / nc : 0;
-      const travel = Math.max(1e-6, D - pause * nc);
-      const v = (out.sHead - out.sSwitch) / travel;
-      let t = tt(T.ENT1), s = out.sSwitch;
-      for (const cs of out.corners) {
-        const tc = t + (cs - s) / v;
-        knot(t, ACT.HAUL, 1, s, 1, cs);
-        knot(tc, ACT.TURN, 1, cs, 1, cs);
-        t = tc + pause; s = cs;
-      }
-      knot(t, ACT.HAUL, 1, s, 1, out.sHead);
+      t0 = ent; parts = [[sZig, out.sSwitch, vOf(rt.segs[0])], [out.sSwitch, out.sHead, vOf(seg)], [out.sHead, Lo, 1]];
+      pauseAll = seg.turns * seg.turnTime * (heavy ? 2 : 1);
+    } else {
+      t0 = tt(T.CLIMB); parts = [[sClimb, out.sFoot, 1], [out.sFoot, out.sHead, vOf(rt.segs[0])], [out.sHead, Lo, 1]];
     }
-    knot(tt(T.TOP), ACT.HAUL, 1, out.sHead, 1, Lo);
-    if (!heavy) knot(tt(T.LAND), ACT.WAIT, 1, Lo, 1, Lo);
-    knot(tt(T.UNLOAD), heavy ? ACT.SET : ACT.UNLOAD, 1, Lo, 2, 0);
+    // Where the model's stretch is shorter than the drawn one (the course-0 ramp has no
+    // length in the model, and the zigzag ends at its own corner, not at the model's head),
+    // the gang would have to rush it. It may then reach the landing after the model's time,
+    // never more than 30 % above the model's speed, and unload in what is left of the
+    // unloading time: the moment it finishes (and everything after) stays the model's.
+    const vBase = H.vLoaded * (heavy ? P.heavy.speedFactor : 1) * 1.3;
+    const need = parts.reduce((a, [s0, s1, v]) => a + Math.max(0, s1 - s0) / (vBase * v), 0);
+    const arrive = Math.min(tt(T.DONE) - 1, Math.max(tt(T.LAND), t0 + need));
+    run(t0, arrive, parts, pauseAll, out.corners);
+    // the queue for its berth at the landing: it moves onto the berth once the gang there
+    // has left (a little after the model's time, taken from its unloading time)
+    let unload = Math.max(tt(T.UNLOAD), arrive);
+    if (!heavy) {
+      const un = tt(T.UNLOAD);
+      const lcap = capOf(Q, Q.land.get(`${c}:${sector}:${G.berth[g]}`), g, (e) => e.serve < un || (e.serve === un && e.h < g), 1, t0, Infinity, Lo);
+      if (lcap) { unload = Math.min(tt(T.DONE) - 1, Math.max(unload, capEnd(lcap))); lcap.t1 = unload; caps.push(lcap); }
+    }
+    if (!heavy && unload > arrive) knot(arrive, ACT.WAIT, 1, Lo, 1, Lo);
+    knot(unload, heavy ? ACT.SET : ACT.UNLOAD, 1, Lo, 2, 0);
     if (task === TASK.RETURNING) {
-      // back at the model's speed: the top, the whole ramp and the road in proportion
-      const top = heavy ? item.top : plan.sectors[sector].top;
-      const road = (kind === GIZA ? plan.road.q : plan.road.h)[route];
-      const tot = top + plan.rampLen[route] + road, D = tt(T.HOME) - tt(T.DONE);
-      const t1 = tt(T.DONE) + (D * top) / tot, t2 = t1 + (D * plan.rampLen[route]) / tot;
-      knot(tt(T.DONE), ACT.RETURN, 2, 0, 2, Lb - back.sHead);
-      knot(t1, ACT.RETURN, 2, Lb - back.sHead, 2, Lb - back.sFoot);
-      knot(t2, ACT.RETURN, 2, Lb - back.sFoot, 2, Lb);
+      // back with the empty sled at one speed all the way, as in the model
+      knot(tt(T.DONE), ACT.RETURN, 2, 0, 2, Lb);
       knot(tt(T.HOME), ACT.IDLE, 0, Li, 0, Li);
     } else {
       knot(tt(T.DONE), ACT.RETURN, 2, 0, 2, 0); // unloaded: holds until the walk back is known
@@ -408,7 +530,19 @@ function tripOf(sim, R, plans, g) {
   }
   // knots must not go back in time (guards rounding in the zigzag split)
   for (let i = KN; i < K.length; i += KN) if (K[i] < K[i - KN]) K[i] = K[i - KN];
-  return { ...base, sig, paths, knots: Float64Array.from(K), load: loadOf(plan, kind, sector), course: c };
+  // the zigzag is a single lane: gangs keep to its middle there (path, from s, to s)
+  const narrow = out.sHead > out.sSwitch + 1e-6 ? [[1, out.sSwitch, out.sHead], [2, Lb - back.sHead, Lb - back.sSwitch]] : [];
+  // once the climb is known, the gang moves over to its model lane on the ramp, after the
+  // whole gang (its front rank is up to ~12 m ahead of the sled) has passed the foot
+  const rampLane = climbKnown && !heavy ? [out.sFoot + 14, LANES[G.lane[g]]] : null;
+  // the two berths of a landing side by side: the gang ends its way out (and starts its way
+  // back) beside the landing point, eased in over the last 30 m
+  // (only past the foot, as the berth is known from the foot on, and only with room for it)
+  const berthLen = Math.min(30, Lo - (out.sFoot + 14));
+  const berth = climbKnown && !heavy && berthLen >= 6 ? [BERTH[G.berth[g]], berthLen] : null;
+  const sig = [task, G.trips[g], c, route, sector, R.key, climbKnown ? `${G.lane[g]}${G.berth[g]}` : '-', tt(T.START), tt(T.FOOT), climbKnown ? tt(T.TOP) : 0,
+    task === TASK.RETURNING ? tt(T.HOME) : 0, ...caps.map((cp) => cp.h.join(','))].join('|');
+  return { ...base, sig, paths, knots: Float64Array.from(K), load: loadOf(plan, kind, sector), course: c, narrow, rampLane, caps, berth };
 }
 
 function reverse(p) {
@@ -429,8 +563,9 @@ export function gangTracker() {
       const R = rampScene(sim);
       const out = { t: sim.state.t, trips: [], ramps: null, gangs: sim.state.gang.kind.length };
       if (R.key !== rampKey) { rampKey = R.key; out.ramps = rampsForDrawing(sim, R); }
+      const Q = queueIndex(sim, plans);
       for (let g = 0; g < sim.state.gang.kind.length; g++) {
-        const tr = tripOf(sim, R, plans, g);
+        const tr = tripOf(sim, R, plans, g, Q);
         if (sigs[g] === tr.sig) continue;
         sigs[g] = tr.sig;
         out.trips.push(tr);
@@ -442,8 +577,8 @@ export function gangTracker() {
 
 // every gang's trip, for tests and benchmarks
 export function gangTrips(sim) {
-  const R = rampScene(sim), plans = planner(sim);
-  return sim.state.gang.kind.length ? Array.from(sim.state.gang.kind, (_, g) => tripOf(sim, R, plans, g)) : [];
+  const R = rampScene(sim), plans = planner(sim), Q = queueIndex(sim, plans);
+  return sim.state.gang.kind.length ? Array.from(sim.state.gang.kind, (_, g) => tripOf(sim, R, plans, g, Q)) : [];
 }
 
 // What the page needs to draw the ramps: the straight wedges and each face's zigzag up to
@@ -490,6 +625,16 @@ export function tokenAt(trip, t, out = {}) {
   out.blend = !!BLEND[out.act];
   out.s = out.blend ? out.sa : out.sa + (out.sb - out.sa) * out.a;
   out.v = !out.blend && t1 < Infinity && t1 > t0 ? (out.sb - out.sa) / (t1 - t0) : 0;
+  // held back in a queue (see capOf)
+  if (trip.caps && !out.blend) for (const cap of trip.caps) {
+    if (t < cap.t0 || t >= cap.t1 || out.pa !== cap.li) continue;
+    const lim = cap.s - capBack(cap, t);
+    if (out.s > lim) {
+      out.v = Math.max(0, (cap.s - capBack(cap, t + 0.5) - lim) / 0.5);
+      out.s = lim;
+      out.act = out.v > 0.01 ? ACT.HAUL : ACT.WAIT;
+    }
+  }
   return out;
 }
 // the last time the trip is known for (after it, the gang holds where it is)
@@ -500,13 +645,33 @@ const lerpAngle = (a, b, k) => { let d = ((b - a + Math.PI) % (2 * Math.PI)) - M
 // lane offset (to the left of travel), faded out over the first and last 10 m of a path so
 // every path starts and ends on its exact point
 const fade = (line, s) => smooth(s / 10) * smooth((line.L - s) / 10);
+// how much of the gang's lane offset applies at arc length s of path li: none at the ends of
+// a path and on the single-lane zigzag, eased in and out over 8 m; and less of it on sharp
+// turns (none on a hairpin), so a gang in the outer lane does not swing wide round them
+function laneAt(trip, line, li, s, turn) {
+  if (!trip.lane) return 0;
+  let lane = trip.lane;
+  if (li === 1 && trip.rampLane) lane += (trip.rampLane[1] - lane) * smooth((s - trip.rampLane[0]) / 10);
+  // at the landing the gang moves over to its berth instead (over the last stretch)
+  const b = trip.berth ? trip.berth[0] : 0, w = b ? trip.berth[1] : 10;
+  let k = li === 1 ? smooth(s / 10) * smooth((line.L - s) / w) : li === 2 ? smooth(s / w) * smooth((line.L - s) / 10) : fade(line, s);
+  const berth = !b ? 0 : li === 1 ? b * (1 - smooth((line.L - s) / w)) : li === 2 ? -b * (1 - smooth(s / w)) : 0;
+  k *= turn;
+  if (trip.narrow) for (const [p, a, e] of trip.narrow) if (p === li) k *= 1 - smooth((s - a + 8) / 8) * smooth((e + 8 - s) / 8);
+  return lane * k + berth;
+}
 
 const P3 = [0, 0, 0];
-// place a point at arc length s of `line`, `lat` metres to the left (plus the gang's lane)
-function placeOn(line, s, lat, lane, out, o) {
+// place a point at arc length s of path li, `lat` metres to the left (plus the gang's lane);
+// the heading is smoothed over ±4 m, and offsets shrink on sharp turns, so people off the
+// centre line round corners at a walk
+function placeOn(trip, lines, li, s, lat, out, o) {
+  const line = lines[li];
   line.at(s, P3);
-  const yaw = line.yaw(s);
-  const off = lat + lane * fade(line, s);
+  const yaw = line.yaw(s, 4);
+  // 1 on the straight, 0 on a hairpin: offsets to the side shrink on sharp turns
+  const turn = (1 + Math.cos(line.yaw(s + 8, 3) - line.yaw(s - 8, 3))) / 2;
+  const off = lat * (0.4 + 0.6 * turn) + laneAt(trip, line, li, s, turn);
   out[o] = P3[0] + Math.cos(yaw) * off; out[o + 1] = P3[1]; out[o + 2] = P3[2] - Math.sin(yaw) * off;
   return yaw;
 }
@@ -518,17 +683,17 @@ export const FIG = 7; // x, y, z, yaw, pose, distance walked (for the leg cycle)
 // Static placement of the whole gang standing on path `li` at arc length s (no motion):
 // used for each end of a regrouping.
 function formation(trip, P, li, s, act, out, o, t, speed) {
-  const { spec, lead, lines } = P, line = lines[li], lane = trip.lane;
+  const { spec, lead, lines } = P, line = lines[li];
   const moving = speed > 0.02;
   // sled
-  const yaw = placeOn(line, s, 0, lane, out, o);
+  const yaw = placeOn(trip, lines, li, s, 0, out, o);
   out[o + 3] = yaw;
   out[o + 4] = -Math.atan(line.slope(s));
   let f = o + SLED;
   const pull = act === ACT.HAUL, ret = act === ACT.RETURN || act === ACT.WALK;
   for (let r = 0; r < spec.ranks; r++) for (let j = 0; j < spec.files; j++) {
     const sp = s + lead + r * spec.gap;
-    out[f + 3] = placeOn(line, sp, spec.lat[j], lane, out, f);
+    out[f + 3] = placeOn(trip, lines, li, sp, spec.lat[j], out, f);
     let pose = POSE.REST;
     if (pull) pose = POSE.PULL;
     else if (ret) pose = moving ? (r === 0 ? POSE.PULL : POSE.WALK) : POSE.REST;
@@ -542,7 +707,7 @@ function formation(trip, P, li, s, act, out, o, t, speed) {
     const side = k % 2 ? 1 : -1;
     const sp = pourer ? s + lead * 0.55 + Math.floor(k / 2) * 0.7 : s - lead * 0.9 - Math.floor((k - spec.pourers) / 2) * 0.7;
     const lat = pourer ? side * (trip.load ? trip.load[0] / 2 + 0.55 : 0.8) : spec.extra > 2 ? side * 0.5 : 0;
-    out[f + 3] = placeOn(line, sp, lat, lane, out, f);
+    out[f + 3] = placeOn(trip, lines, li, sp, lat, out, f);
     let pose = POSE.REST;
     if (pull) pose = pourer ? POSE.POUR : POSE.PUSH;
     else if (act === ACT.TURN || act === ACT.LOAD || act === ACT.UNLOAD || act === ACT.SET) pose = POSE.LEVER;

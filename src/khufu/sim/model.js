@@ -44,7 +44,9 @@ export const TASK = { WAITING: 0, OUT: 1, RETURNING: 2 };
 // to place each gang along its route. ARR1 / ENT1: arrival at the top of the first ramp
 // segment and entry onto the second (the zigzag), so the wait between them is known; with a
 // single segment both equal TOP. These two are written only for drawing: no event or random
-// draw depends on them, so they leave the build (and its hash) unchanged.
+// draw depends on them, so they leave the build (and its hash) unchanged; nor does
+// gang.lane and gang.berth, the lane of the straight ramp each gang climbs in and the berth
+// of the landing it unloads at (0 or 1).
 export const T = { START: 0, DEPART: 1, FOOT: 2, CLIMB: 3, TOP: 4, LAND: 5, UNLOAD: 6, DONE: 7, HOME: 8, WAIT: 9, ARR1: 10, ENT1: 11 };
 export const NT = 12;
 
@@ -94,7 +96,7 @@ export function createModel(overrides = {}) {
       quarry: { stock: 0, cut: 0, cutting: 0, idle: new Uint8Array(P.quarry.faces), capIdle: [], wait: [], bays: makeResource('quarry loading bays', P.quarry.bays), waitMax: 0, waitSum: 0, waitN: 0 },
       harbour: { tura: 0, shipped: 0, delivered: 0, granite: 0, graniteShipped: 0, graniteDelivered: 0, starveSince: -1, starved: 0, wait: [],
         berths: makeResource('harbour berths', P.harbour.berths), bays: makeResource('harbour loading bays', P.harbour.bays), boatLoad: new Int32Array(P.tura.boats), waitMax: 0, waitSum: 0, waitN: 0 },
-      gang: { kind: new Uint8Array(G), task: new Uint8Array(G), course: new Int32Array(G).fill(-1), sector: new Int32Array(G).fill(-1), route: new Int8Array(G).fill(-1), trips: new Int32Array(G), t: new Float64Array(G * NT) },
+      gang: { kind: new Uint8Array(G), task: new Uint8Array(G), course: new Int32Array(G).fill(-1), sector: new Int32Array(G).fill(-1), route: new Int8Array(G).fill(-1), trips: new Int32Array(G), t: new Float64Array(G * NT), lane: new Int8Array(G), berth: new Int8Array(G) },
       heavyIdle: [],
       lanes: {},
       landing: { served: 0, waitSum: 0, waitMax: 0, maxQ: 0, maxQCourse: -1, maxQT: 0 },
@@ -233,8 +235,8 @@ export function createModel(overrides = {}) {
     const jv = jit();
     for (let i = 0; i < route.segs.length; i++) {
       const seg = route.segs[i];
-      const entry = acquire(lane(seg), t, seg.headway);
-      if (i === 0) G.t[tb + T.CLIMB] = entry;
+      const L = lane(seg), entry = acquire(L, t, seg.headway);
+      if (i === 0) { G.t[tb + T.CLIMB] = entry; G.lane[g] = L.k; }
       if (i === 1) G.t[tb + T.ENT1] = entry;
       t = entry + seg.length / ((P.haul.vLoaded / (1 + P.haul.climbK * seg.grade)) * jv) + seg.turns * seg.turnTime;
       if (i === 0) G.t[tb + T.ARR1] = G.t[tb + T.ENT1] = t;
@@ -244,6 +246,7 @@ export function createModel(overrides = {}) {
     G.t[tb + T.LAND] = t;
     const unload = P.haul.unloadMin * 60 * jit();
     const entry = acquire(rt.land[s], t, unload);
+    G.berth[g] = rt.land[s].k;
     G.t[tb + T.UNLOAD] = entry; G.t[tb + T.DONE] = entry + unload;
     push(S.Q, entry + unload, UNLOADED, g);
   }

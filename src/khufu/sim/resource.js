@@ -49,6 +49,7 @@ export function acquire(R, t, hold) {
   for (let i = 1; i < nf.length; i++) if (nf[i] < nf[k]) k = i;
   const entry = nf[k] > t ? nf[k] : t;
   nf[k] = entry + hold;
+  R.k = k; // which server (for drawing a gang in the ramp lane it took; not part of the hash)
   note(R, t, entry, hold);
   return entry;
 }
