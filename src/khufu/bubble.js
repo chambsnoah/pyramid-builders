@@ -178,15 +178,7 @@ export class Bubble {
       const n = (o.length - SLED) / FIG;
       people += n;
       if (d < (this.inside.has(g) ? NEAR_OUT : NEAR)) near.push([d, g, n]);
-      else if (d < FAR) {
-        for (let j = 0; j < n; j++) {
-          const f = SLED + j * FIG, pose = o[f + 4];
-          const lean = pose === POSE.PULL ? 0.42 : pose === POSE.PUSH ? 0.55 : pose === POSE.LEVER || pose === POSE.POUR ? 0.3 : 0;
-          E3.set(lean, o[f + 3], 0); Q.setFromEuler(E3);
-          M4.compose(V.set(o[f], o[f + 1] - (pose === POSE.KNEEL ? 0.4 : 0), o[f + 2]), Q, SC.set(1, 1, 1));
-          if (nfar < F.instanceMatrix.count) F.setMatrixAt(nfar++, M4);
-        }
-      }
+      else if (d < FAR) nfar = this.simpleFigures(o, n, nfar);
     }
     S.count = ns; St.count = nst;
     S.instanceMatrix.needsUpdate = true; St.instanceMatrix.needsUpdate = true; if (St.instanceColor) St.instanceColor.needsUpdate = true;
@@ -198,13 +190,7 @@ export class Bubble {
     for (const [, g, n] of near) {
       if (used + n > BUDGET) {
         // over the budget: drawn as simple figures instead
-        const o = this.bufs[g];
-        for (let j = 0; j < n && nfar < F.instanceMatrix.count; j++) {
-          const f = SLED + j * FIG;
-          E3.set(o[f + 4] === POSE.PULL ? 0.42 : 0, o[f + 3], 0); Q.setFromEuler(E3);
-          M4.compose(V.set(o[f], o[f + 1], o[f + 2]), Q, SC.set(1, 1, 1));
-          F.setMatrixAt(nfar++, M4);
-        }
+        nfar = this.simpleFigures(this.bufs[g], n, nfar);
         continue;
       }
       inside.add(g); used += n;
@@ -215,6 +201,20 @@ export class Bubble {
     if (inside.size && !this.crowd) this.makeCrowd();
     if (this.crowd) this.drawCrowd(inside, dt);
     this.info = { gangs: this.trips.filter(Boolean).length, people, near: inside.size, workers: used, far: nfar, ms: performance.now() - t0 };
+  }
+
+  // the n people of one gang (figures() output o) as simple figures from instance `at` on;
+  // returns the next free instance. One transform whatever the reason a gang is drawn this way.
+  simpleFigures(o, n, at) {
+    const F = this.far;
+    for (let j = 0; j < n && at < F.instanceMatrix.count; j++) {
+      const f = SLED + j * FIG, pose = o[f + 4];
+      const lean = pose === POSE.PULL ? 0.42 : pose === POSE.PUSH ? 0.55 : pose === POSE.LEVER || pose === POSE.POUR ? 0.3 : 0;
+      E3.set(lean, o[f + 3], 0); Q.setFromEuler(E3);
+      M4.compose(V.set(o[f], o[f + 1] - (pose === POSE.KNEEL ? 0.4 : 0), o[f + 2]), Q, SC.set(1, 1, 1));
+      F.setMatrixAt(at++, M4);
+    }
+    return at;
   }
 
   drawCrowd(inside, dt) {
@@ -245,9 +245,9 @@ export class Bubble {
       const o = this.bufs[g], trip = this.trips[g], spec = crewSpec(trip.kind, trip.crew), act = this.acts[g];
       const base = k;
       k += spec.n;
-      if (!HAULING.has(act)) continue;
       const fx = Math.sin(o[3]), fz = Math.cos(o[3]), half = ((trip.load ? trip.load[2] : 1.8) + 0.8) / 2;
-      for (let j = 0; j < spec.files; j++) {
+      // ropes only while the gang is on the move or standing ready to pull
+      if (HAULING.has(act)) for (let j = 0; j < spec.files; j++) {
         // the nose of the sled, a little to the side of the file (left of travel is (cos, −sin))
         A.set(o[0] + fx * half + fz * spec.lat[j] * 0.5, o[1] + 0.25, o[2] + fz * half - fx * spec.lat[j] * 0.5);
         for (let r = 0; r < spec.ranks; r++) {

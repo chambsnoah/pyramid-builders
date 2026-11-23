@@ -155,6 +155,7 @@ function lockPointer() {
 const spotVec = (s) => new THREE.Vector3(...s.pos);
 function setWalk(on, spot) {
   if (on) {
+    if (follow >= 0) setFollow(false);
     const s = spot || SPOTS[0];
     if (!walker.enabled) walker.enter(spotVec(s), s.yaw); else walker.teleport(spotVec(s), s.yaw);
     orbit.enabled = false;
@@ -179,8 +180,9 @@ $('walk').onclick = () => setWalk(!walker.enabled);
 // middle of the view
 let follow = -1;
 const followAt = new THREE.Vector3(), followNow = new THREE.Vector3();
+// (only from the orbit view: walking cancels it, so leaving the walk never jumps the camera)
 function setFollow(on) {
-  follow = on ? bubble.nearestGang(orbit.target) : -1;
+  follow = on && !walker.enabled ? bubble.nearestGang(orbit.target) : -1;
   if (follow >= 0) bubble.sledAt(follow, followAt);
   $('follow').classList.toggle('on', follow >= 0);
 }

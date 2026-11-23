@@ -45,9 +45,9 @@ self.onmessage = (e) => {
         if (ci >= 0) msg.layout = courseLayout(s, ci);
         else msg.layout = null;
       }
-      const g = tracker.update(s);
+      const g0 = performance.now(), g = tracker.update(s);
       msg.gangs = { n: g.gangs, ramps: g.ramps, trips: g.trips };
-      msg.gangMs = performance.now() - t0 - ms;
+      msg.gangMs = performance.now() - g0; // building the gang trips alone
       const tr = new Set(msg.layout ? [msg.layout.cells.buffer, msg.layout.type.buffer, msg.layout.off.buffer, msg.layout.heavy.buffer] : []);
       for (const trip of g.trips) { tr.add(trip.knots.buffer); for (const p of trip.paths) if (typeof p !== 'number') tr.add(p.buffer); }
       self.postMessage(msg, [...tr]);

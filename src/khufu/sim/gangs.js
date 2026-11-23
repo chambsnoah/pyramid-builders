@@ -95,7 +95,7 @@ export function rampScene(sim) {
   const built = S.done ? COURSES[LAST].y1 : COURSES[S.cur].y0; // top of the finished courses
   return {
     key: `${look}:${Y.toFixed(2)}:${S.cur}:${S.done ? 1 : 0}`, look, done: S.done, top, sw, Y, hr, F, plat, built, w: R.straight.width,
-    zw, zgrade: R.zigzag.grade, zig: Number.isFinite(sw) ? zigCorners(sw, R.zigzag.grade) : null,
+    zw, zgrade: R.zigzag.grade, zig: Number.isFinite(sw) && R.zigzag.grade > 0 ? zigCorners(sw, R.zigzag.grade) : null, // (a flat zigzag would never reach the top)
   };
 }
 
@@ -213,8 +213,8 @@ export class Line {
     else if (s >= this.L) i = n - 1;
     else { let lo = 1, hi = n - 1; while (lo < hi) { const m = (lo + hi) >> 1; if (c[m] < s) lo = m + 1; else hi = m; } i = lo; }
     // skip zero-length segments at the ends
-    while (i > 1 && c[i] - c[i - 1] < 1e-9 && s <= 0) i++;
-    while (i < n - 1 && c[i] - c[i - 1] < 1e-9 && s >= this.L) i--;
+    while (i < n - 1 && c[i] - c[i - 1] < 1e-9 && s <= 0) i++;
+    while (i > 1 && c[i] - c[i - 1] < 1e-9 && s >= this.L) i--;
     const d = Math.max(1e-9, c[i] - c[i - 1]), k = (s - c[i - 1]) / d;
     const a = 3 * (i - 1), b = 3 * i;
     out[o] = p[a] + (p[b] - p[a]) * k; out[o + 1] = p[a + 1] + (p[b + 1] - p[a + 1]) * k; out[o + 2] = p[a + 2] + (p[b + 2] - p[a + 2]) * k;

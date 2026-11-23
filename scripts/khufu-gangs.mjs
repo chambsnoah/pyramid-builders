@@ -84,6 +84,8 @@ function play(name, from, seconds, dt = 1) {
   }
   const w = worst.v ? `${worst.v.toFixed(2)} m/s (gang ${worst.g}, ${worst.who}, ${worst.act}, day ${(worst.t / DAY).toFixed(3)})` : '0';
   console.log(`  ${name.padEnd(34)} ${steps} steps of ${dt} s, ${trips.size} gangs, ${Math.round(people / steps)} people, ${sent} trips sent; fastest ${w}; late trips: ${stale.n} compared, worst ${stale.worst.toFixed(3)} m${stale.worst > 0.05 ? ` (${stale.at})` : ''}`);
+  const G = run.sim.state.gang.kind.length;
+  check(trips.size === G && people > 0, `${name}: the tracker delivers all ${G} gangs (${trips.size})`);
   check(nan === 0, `${name}: no NaN`);
   check(worst.v <= VMAX, `${name}: nobody moves faster than ${VMAX} m/s between steps`);
   // (only meaningful at fine steps: news about a gang ahead in a queue reaches the others at
