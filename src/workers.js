@@ -30,7 +30,8 @@ function partGeometries() {
 const ITEM_TYPES = ['basket', 'jar', 'crate', 'beam', 'mallet', 'pick', 'hoe', 'bread', 'waterjar'];
 
 export class Crowd {
-  constructor(scene, max = 160) {
+  // opts.ropes / opts.poles: how many rope and pole segments can be drawn at once
+  constructor(scene, max = 160, opts = {}) {
     this.max = max;
     this.workers = [];
     const g = partGeometries();
@@ -58,9 +59,9 @@ export class Crowd {
       this.items[t] = im; scene.add(im);
     }
     // straight segments: ropes and lever poles
-    this.ropes = new THREE.InstancedMesh(GEO.rope, MAT.rope, 600);
+    this.ropes = new THREE.InstancedMesh(GEO.rope, MAT.rope, opts.ropes ?? 600);
     this.ropes.frustumCulled = false; this.ropes.castShadow = true; this.ropes.count = 0;
-    this.poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.04, 0.05, 1, 6).translate(0, 0.5, 0).rotateX(Math.PI / 2), MAT.darkWood, 200);
+    this.poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.04, 0.05, 1, 6).translate(0, 0.5, 0).rotateX(Math.PI / 2), MAT.darkWood, opts.poles ?? 200);
     this.poles.frustumCulled = false; this.poles.castShadow = true; this.poles.count = 0;
     scene.add(this.ropes, this.poles);
     this.segRope = []; this.segPole = [];
@@ -81,8 +82,18 @@ export class Crowd {
 
   segment(kind, a, b) { (kind === 'rope' ? this.segRope : this.segPole).push(a.clone(), b.clone()); }
 
+  // A worker with `dist` set (metres walked, and `spd` in m/s) is driven from outside, e.g. by
+  // a model that knows where everyone is at any time: its walk cycle follows that distance
+  // exactly instead of the movement since the last frame, so it never depends on frame history.
   update(dt) {
     for (const w of this.workers) {
+      if (w.dist != null) {
+        const stride = w.pose === 'pull' || w.pose === 'push' ? STRIDE * 0.62 : STRIDE;
+        w.walkPhase = (w.dist / stride) * Math.PI * 2;
+        w.speed = w.spd || 0;
+        w.act += dt * w.actRate;
+        continue;
+      }
       if (!w.lastPos) w.lastPos = w.pos.clone();
       const d = Math.hypot(w.pos.x - w.lastPos.x, w.pos.z - w.lastPos.z);
       w.speed = dt > 0 ? THREE.MathUtils.lerp(w.speed, d / dt, Math.min(1, dt * 8)) : w.speed;

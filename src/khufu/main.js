@@ -11,6 +11,7 @@ import { Rooms } from './rooms.js';
 import { Collision } from './collision.js';
 import { Walker } from './walker.js';
 import { WorkingCourse } from './working.js';
+import { Bubble } from './bubble.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
 import { StatsPanel } from './statsPanel.js';
 import { DAY, YEAR } from './sim/params.js';
@@ -121,6 +122,7 @@ const rooms = new Rooms(scene);
 const collision = new Collision(rooms.solidBoxes);
 const walker = new Walker(camera, renderer.domElement, collision);
 const working = new WorkingCourse(scene);
+const bubble = new Bubble(scene);
 
 // room labels for X-ray
 const overlay = new THREE.Group(); overlay.visible = false; scene.add(overlay);
@@ -153,6 +155,7 @@ function lockPointer() {
 const spotVec = (s) => new THREE.Vector3(...s.pos);
 function setWalk(on, spot) {
   if (on) {
+    if (follow >= 0) setFollow(false);
     const s = spot || SPOTS[0];
     if (!walker.enabled) walker.enter(spotVec(s), s.yaw); else walker.teleport(spotVec(s), s.yaw);
     orbit.enabled = false;
@@ -172,6 +175,18 @@ function setWalk(on, spot) {
   if (!on) $('climb').style.display = 'none';
 }
 $('walk').onclick = () => setWalk(!walker.enabled);
+
+// follow a gang: the camera keeps its offset from the sled of the working gang nearest the
+// middle of the view
+let follow = -1;
+const followAt = new THREE.Vector3(), followNow = new THREE.Vector3();
+// (only from the orbit view: walking cancels it, so leaving the walk never jumps the camera)
+function setFollow(on) {
+  follow = on && !walker.enabled ? bubble.nearestGang(orbit.target) : -1;
+  if (follow >= 0) bubble.sledAt(follow, followAt);
+  $('follow').classList.toggle('on', follow >= 0);
+}
+$('follow').onclick = () => setFollow(follow < 0);
 renderer.domElement.addEventListener('click', () => { if (walker.enabled && document.pointerLockElement !== renderer.domElement && !params.has('nolock')) lockPointer(); });
 SPOTS.forEach((s, i) => {
   const b = document.createElement('button');
@@ -187,6 +202,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyX') setXray(!xray);
   if (e.code === 'KeyF') setWalk(!walker.enabled);
+  if (e.code === 'KeyG' && !walker.enabled) setFollow(follow < 0);
   const d = /^Digit(\d)$/.exec(e.code);
   if (d && SPOTS[+d[1] - 1]) setWalk(true, SPOTS[+d[1] - 1]);
 });
@@ -234,6 +250,7 @@ const client = new SimClient({
     console.info(`[khufu] model ran in the worker in ${(timing.ms / 1000).toFixed(2)} s: ${summary.blocks} blocks, ${(summary.endT / YEAR).toFixed(2)} years, hash ${summary.hash}`);
     window.__khufu.summary = summary; window.__khufu.runMs = timing.ms;
     stats.setRun(summary);
+    bubble.reset();
     const restarted = timeline.ready; // the worker was restarted after a crash: stay where we were
     timeline.setRun(summary);
     let t = summary.endT; // by default, the finished monument (as before the model has run)
@@ -249,6 +266,8 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
+    if (m.gangs) bubble.apply(m.gangs);
+    bubble.setVisible(!view.done);
     stats.update(view, m.t, timing);
   },
   onRestart: (n) => { timeline.setEnabled(false); timeline.setPlaying(false); timeline.setProgress(`The event model stopped; running it again (attempt ${n + 1})…`); },
@@ -295,7 +314,7 @@ function syncBench(n = 60) {
   };
 }
 window.__khufu = {
-  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, working, perf,
+  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, working, bubble, perf,
   get timeline() { return timeline; }, get client() { return client; }, get state() { return view; },
   // time seeks through the worker: [{ day, worker ms, round trip ms, … }] for each day in turn
   benchSeek: async (days) => {
@@ -309,7 +328,57 @@ window.__khufu = {
       out.push({ day: d, workerMs: +r.ms.toFixed(2), roundTripMs: +r.roundTrip.toFixed(1), toFrameMs: +(performance.now() - a).toFixed(1), built: r.view.built, blocks: r.view.blocksSet });
     }
     return out;
-  }, setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
+  },
+  // Whole frames as the frame loop does them, with the GPU forced to finish: place the gangs
+  // at a time `simDt` later each frame (re-uploading every instance), render, read a pixel.
+  benchFrames: (n = 60, simDt = 1) => {
+    const gl = renderer.getContext(), px = new Uint8Array(4), ts = [], up = [];
+    const t0 = timeline.t;
+    for (let i = 0; i <= n; i++) {
+      const a = performance.now();
+      bubble.update(t0 + i * simDt, camera, 1 / 60);
+      const b = performance.now();
+      renderer.render(scene, camera); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      if (i) { ts.push(performance.now() - a); up.push(b - a); }
+    }
+    bubble.update(timeline.t, camera, 0);
+    const st = (v) => { const s = [...v].sort((x, y) => x - y); return { mean: +(s.reduce((x, y) => x + y, 0) / s.length).toFixed(2), median: +s[s.length >> 1].toFixed(2), p95: +s[Math.floor(s.length * 0.95)].toFixed(2) }; };
+    const f = st(ts);
+    return { frameMs: f, fps: +(1000 / f.mean).toFixed(1), placeMs: st(up), tris: renderer.info.render.triangles, calls: renderer.info.render.calls, bubble: { ...bubble.info }, canvas: [renderer.domElement.width, renderer.domElement.height] };
+  },
+  // Plays the timeline through the worker (real replies, real latency) in steps of `step` s
+  // of wall time at `speed` × working time, and reports the largest move of any sled or
+  // person of the gangs in detail between two steps, in metres per second of working time.
+  checkMotion: async ({ speed = 1, seconds = 20, step = 0.05 } = {}) => {
+    const was = timeline.playing; timeline.setPlaying(false);
+    const prev = new Map();
+    let worst = { v: 0 }, jumps = 0, steps = 0, replies = 0;
+    const before = client.id;
+    for (let k = 0; k < seconds / step; k++) {
+      timeline.seek(Math.min(timeline.end, timeline.t + step * speed));
+      await new Promise((r) => setTimeout(r, step * 1000));
+      const t = timeline.t;
+      bubble.update(t, camera, step);
+      steps++;
+      for (const g of bubble.inside) {
+        const o = bubble.bufs[g], p = prev.get(g);
+        if (p && p.t < t && p.o.length === o.length) {
+          const dt = t - p.t;
+          for (let i = 0; i < o.length; i = i ? i + 7 : 9) {
+            const d = Math.hypot(o[i] - p.o[i], o[i + 1] - p.o[i + 1], o[i + 2] - p.o[i + 2]);
+            const v = d / dt;
+            if (v > worst.v) worst = { v: +v.toFixed(2), d: +d.toFixed(3), g, i, t: +(t / DAY).toFixed(4), act: bubble.acts[g] };
+            if (d > Math.max(0.5, 3 * dt)) jumps++;
+          }
+        }
+        prev.set(g, { t, o: Float32Array.from(o) });
+      }
+    }
+    replies = client.id - before;
+    timeline.setPlaying(was);
+    return { speed, steps, replies, worst, jumps, gangsInDetail: bubble.inside.size, workers: bubble.info.workers };
+  },
+  setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
   view: (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); orbit.target.set(tx, ty, tz); orbit.update(); },
   // run `seconds` of frames and report the frame rate (requestAnimationFrame timing)
   measure: (seconds = 3) => new Promise((res) => {
@@ -327,6 +396,11 @@ let hudT = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
   timeline.tick(dt);
+  if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
+  if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {
+    const d = followNow.clone().sub(followAt);
+    camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);
+  }
   if (walker.enabled) walker.update(dt); else orbit.update();
   const climbShown = walker.enabled && walker.canClimb;
   if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
@@ -347,7 +421,8 @@ function frame() {
   if (hudT <= 0 && perf.t > 0.05) {
     hudT = 0.5;
     perf.fps = perf.frames / Math.max(1e-6, perf.t); perf.ms = (perf.t / perf.frames) * 1000;
-    $('stats').textContent = `${perf.fps.toFixed(0)} fps · ${perf.ms.toFixed(1)} ms · ${perf.tris.toLocaleString()} tris · ${perf.calls} draws${monument.far ? ' · far hull' : ''}`;
+    const bi = bubble.info;
+    $('stats').textContent = `${perf.fps.toFixed(0)} fps · ${perf.ms.toFixed(1)} ms · ${perf.tris.toLocaleString()} tris · ${perf.calls} draws${monument.far ? ' · far hull' : ''}${bi.near ? ` · ${bi.near} gangs, ${bi.workers} workers in detail` : ''}`;
     perf.frames = 0; perf.t = 0; perf.worst = 0;
     if (walker.enabled) {
       const el = whereIs(walker.pos);

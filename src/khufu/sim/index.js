@@ -8,7 +8,7 @@
 import { createModel, LAST } from './model.js';
 import { MONTH } from './params.js';
 
-export { createModel, LAST, TASK, T, GIZA, TURA, HEAVY } from './model.js';
+export { createModel, LAST, TASK, T, NT, GIZA, TURA, HEAVY } from './model.js';
 export { DEFAULTS, DAY, YEAR, MONTH, YEAR_DAYS, MONTH_DAYS, withDefaults } from './params.js';
 export { ELEM, tagOf } from './planner.js';
 
