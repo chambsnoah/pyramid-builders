@@ -14,7 +14,7 @@ import { WorkingCourse } from './working.js';
 import { Bubble } from './bubble.js';
 import { SLED, FIG } from './sim/gangs.js';
 import { SpecialWorks } from './works.js';
-import { tunnelAt, TUNNEL } from './sim/works.js';
+import { TUNNEL } from './sim/works.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
 import { StatsPanel } from './statsPanel.js';
 import { DAY, YEAR } from './sim/params.js';
@@ -276,7 +276,6 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
-    tunnelNow = client.summary?.works ? tunnelAt(client.summary.works, m.t) : null;
     applyReveal();
     if (m.gangs) bubble.apply(m.gangs);
     bubble.setVisible(!view.done);
@@ -409,7 +408,8 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
   timeline.tick(dt);
   if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
-  if (timeline.ready) works.update(timeline.t, walker.enabled);
+  // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
+  if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled); if (tn) { tunnelNow = tn; applyReveal(); } }
   if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);

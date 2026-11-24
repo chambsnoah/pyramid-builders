@@ -87,6 +87,11 @@ play('tunnellers, from the descending passage into the horizontal one', W.stages
 play('tunnellers, from the passage into the chamber', W.stages[2].t0 - 450, 900, people, 1.6);
 play('tunnellers, the chamber heading widening', W.stages[2].t0 + (W.stages[2].t1 - W.stages[2].t0) * 0.12 - 3600, 7200, people, 1.6);
 play('tunnellers, from the chamber into the blind passage', W.stages[3].t0 - 450, 900, people, 1.6);
+{ // where the carriers' way across the chamber turns into the blind passage (face at z1 − 0.5)
+  const st = W.stages[2], ch2 = ELEMENTS.find((e) => e.id === 'subterranean').voids[1];
+  const tTurn = st.t0 + ((st.t1 - st.t0) * (ch2.z1 - 0.5 - st.z0)) / (st.z1 - st.z0);
+  play('tunnellers, the way turning into the blind passage', tTurn - 1800, 3600, people, 1.6);
+}
 play('plugs being lowered into the gallery', W.plugs.lower[0][0] - 60, W.plugs.lower[2][1] - W.plugs.lower[0][0] + 120, plugs, 0.2);
 play('plugs sliding down the ascending passage', W.plugs.slide[0][0] - 60, W.plugs.slide[2][1] - W.plugs.slide[0][0] + 120, plugs, 0.45);
 // the face only ever moves south, and stops for good when the work is left
@@ -124,11 +129,26 @@ check(m3 > 0.5 && m3 < 6, `the chamber is cut at about ${m3.toFixed(1)} m³ a wo
 
 // ---- 4. where the plugs are --------------------------------------------------------------
 const gal = ELEMENTS.find((e) => e.id === 'gallery').voids[0], asc = ELEMENTS.find((e) => e.id === 'ascending').voids[0];
-const inside = (v, x, y, z, hw, hh) => x - hw >= v.x0 - 1e-6 && x + hw <= v.x1 + 1e-6 && z >= v.z0 && z <= v.z1 && y - hh >= floorY(v, z) - 0.05 && y + hh <= ceilY(v, z) + 0.05;
+// each plug as a block: its eight corners from the centre, its size and its pitch (its long
+// axis rises southward); every corner within the passage, its underside on the floor
+function plugFits(v, k, what) {
+  const o = k * 5, p = pbuf[o + 3], len = PLUGS[k].len, [w, h] = PLUG_SIZE;
+  const u = [0, Math.sin(p), Math.cos(p)], n = [0, Math.cos(p), -Math.sin(p)];
+  let ok = true, gap = 0;
+  for (const a of [-1, 1]) for (const b of [-1, 1]) for (const c of [-1, 1]) {
+    const x = pbuf[o] + (c * w) / 2, y = pbuf[o + 1] + (a * len / 2) * u[1] + (b * h / 2) * n[1], z = pbuf[o + 2] + (a * len / 2) * u[2] + (b * h / 2) * n[2];
+    if (x < v.x0 - 1e-6 || x > v.x1 + 1e-6 || z < v.z0 - 1e-6 || z > v.z1 + 1e-6 || y < floorY(v, z) - 0.02 || y > ceilY(v, z) + 0.02) ok = false;
+    if (b === -1) gap = Math.max(gap, Math.abs(y - floorY(v, z)));
+  }
+  if (!ok || gap > 0.02) console.log(`    plug ${k + 1} ${what}: inside ${ok}, underside ${gap.toFixed(3)} m off the floor`);
+  return ok && gap <= 0.02;
+}
+// (stored on the gallery floor: the floor of its central channel, between the benches)
+const galCh = { ...gal, x0: asc.x0, x1: asc.x1 };
 plugsAt(W, W.plugs.lower[2][1] + DAY, pbuf);
-check(PLUGS.every((_, k) => inside(gal, pbuf[k * 5], pbuf[k * 5 + 1], pbuf[k * 5 + 2], PLUG_SIZE[0] / 2, 0)), 'the stored plugs rest inside the Grand Gallery, on its floor');
+check(PLUGS.every((_, k) => plugFits(galCh, k, 'stored')), 'the stored plugs lie whole inside the Grand Gallery\'s central channel, on its floor');
 plugsAt(W, sum.endT, pbuf);
-check(PLUGS.every((_, k) => inside(asc, pbuf[k * 5], pbuf[k * 5 + 1], pbuf[k * 5 + 2], PLUG_SIZE[0] / 2, 0)), 'at the end the plugs fill the lower end of the ascending passage');
+check(PLUGS.every((_, k) => plugFits(asc, k, 'at the end')), 'at the end the plugs lie whole inside the lower end of the ascending passage, on its floor');
 const low = pbuf[2] + (PLUG_SIZE[1] / 2) * Math.sin(pbuf[3]) - (PLUGS[0].len / 2) * Math.cos(pbuf[3]); // its bottom edge, on the floor
 check(Math.abs(low - LEVELS.ascendingStartZ) < 0.2, `the lowest plug's lower end is at the bottom of the ascending passage (z ${low.toFixed(2)} vs ${LEVELS.ascendingStartZ.toFixed(2)})`);
 void tagOf; void YEAR;

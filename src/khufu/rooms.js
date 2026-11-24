@@ -4,7 +4,7 @@
 // and anything outside the casing trimmed off. One mesh per element and material, so a
 // later phase can show rooms as they are built.
 import * as THREE from 'three';
-import { ELEMENTS, TAN, HALF, floorY } from './data.js';
+import { ELEMENTS, TAN, HALF, COURSES, floorY } from './data.js';
 import { plane, split, clip, subtract, volumePlanes, volumeBounds, volumeFaces, newell } from './geom.js';
 import { TX } from './textures.js';
 
@@ -14,6 +14,23 @@ const EXTERIOR = [
 ];
 const GROUND = plane(0, 1, 0, 0);
 const OPEN = 1e6; // a cut plane this far away cuts nothing
+// Chambers roofed with flat granite beams over the whole room (sim/planner.js). (The Queen's
+// Chamber, the gallery and the antechamber have passages roofed lower down while their walls
+// still rise, and one cut plane per room cannot hide one ceiling and keep the other walls.)
+const BEAM_ROOFED = new Set(['king', 'relieving']);
+// The flat ceilings of the rooms roofed with beams, each with the top of the course its beams
+// lie in: until that course is finished the room is open to the sky (its beams are drawn by
+// the working course as they are set), so its ceiling is not drawn. { element id: [{ y, done }] }
+function lids() {
+  const out = {};
+  for (const el of ELEMENTS) {
+    if (!BEAM_ROOFED.has(el.id)) continue;
+    out[el.id] = el.voids
+      .filter((v) => v.ceil.length === 1 && v.ceil[0][1] === 0 && v.x1 - v.x0 >= 0.3) // flat, not a shaft
+      .map((v) => { const y = v.ceil[0][0], c = COURSES.findIndex((co) => co.y0 >= y - 1e-6); return { y, done: COURSES[c].y1 }; });
+  }
+  return out;
+}
 
 function polyBounds(p) {
   const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
@@ -93,6 +110,7 @@ export class Rooms {
       this.planes[el.id] = pl;
       this.elMats[el.id] = Object.fromEntries(Object.entries(this.mats).map(([k, m]) => { const c = m.clone(); c.clippingPlanes = pl; return [k, c]; }));
     }
+    this.lids = lids();
     const all = [];
     for (const el of ELEMENTS) for (const v of el.voids) all.push({ v, el, planes: volumePlanes(v), bb: volumeBounds(v) });
     this.meshes = {}; // element id -> [mesh]
@@ -145,7 +163,10 @@ export class Rooms {
   setReveal(y, rise = {}, tunnel = null) {
     for (const el of ELEMENTS) {
       const [py, pz] = this.planes[el.id];
-      py.constant = y == null ? OPEN : rise[el.id] ?? y;
+      let cut = y == null ? OPEN : rise[el.id] ?? y;
+      // a beam-roofed chamber whose beams are not all on yet: cut just under its ceiling
+      if (y != null) for (const l of this.lids[el.id] || []) if (l.y < cut && y < l.done - 1e-4) cut = l.y - 0.01;
+      py.constant = cut;
       let face = OPEN;
       if (tunnel && el.id === 'descending') face = tunnel.desc;
       if (tunnel && el.id === 'subterranean') face = tunnel.sub;

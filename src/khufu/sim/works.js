@@ -170,10 +170,8 @@ export function diggersAt(W, t, out) {
   // the roof terraces). The first stays on the passage axis, so it never jumps.
   // (across the chamber the first works its way over from the passage axis to the blind
   // passage, which leaves the chamber farther west, east of the rock ledge in front of it)
-  const xa = (DESC.x0 + DESC.x1) / 2, xb = BLIND.x1 - 0.12;
-  const kc = Math.min(1, Math.max(0, (f.z - CHAMBER.z0 - 1) / (CHAMBER.z1 - CHAMBER.z0 - 1)));
   for (let i = 0; i < (wide ? 3 : 1); i++) {
-    const x = i === 0 ? (tn.stage === 3 ? xb : xa + (xb - xa) * kc) : [6.0, 4.4][i - 1];
+    const x = i === 0 ? cutX(f.z) : [6.0, 4.4][i - 1];
     const o = i * 5, z = f.z - 0.7;
     out[o] = x; out[o + 1] = floorAt(z); out[o + 2] = z; out[o + 3] = 0; out[o + 4] = 0;
   }
@@ -190,6 +188,13 @@ export function diggersAt(W, t, out) {
 }
 // the floor of the cut at z (the descending passage, then the level works below it)
 function floorAt(z) { return z <= LEVELS.descendingBottom.z ? Math.max(floorY(DESC, z), LEVELS.descendingBottom.y) : HPASS.floor[0]; }
+// x of the way through the cut at z: the passage axis, then across the chamber floor it
+// works over toward the blind passage (east of the rock ledge in front of it), reaching it
+// at the corner where the way turns into that passage. The face end of the way and the
+// corner move together, so the way only ever lengthens a little at a time.
+const X_AXIS = (DESC.x0 + DESC.x1) / 2, X_BLIND = BLIND.x1 - 0.12;
+const Z_ACROSS0 = CHAMBER.z0 + 1, Z_ACROSS1 = CHAMBER.z1 - 0.5;
+function cutX(z) { return X_AXIS + (X_BLIND - X_AXIS) * Math.min(1, Math.max(0, (z - Z_ACROSS0) / (Z_ACROSS1 - Z_ACROSS0))); }
 // polyline along the floor of the cut from its mouth to the face, with arc lengths
 function cutLine(tn) {
   const x = (DESC.x0 + DESC.x1) / 2, p = [[x, floorAt(Z_ROCK), Z_ROCK]];
@@ -199,9 +204,9 @@ function cutLine(tn) {
     p.push([x, floorAt(zb), zb]);
     // across the chamber floor to the blind passage, east of the rock ledge in front of it
     if (zEnd > CHAMBER.z0 + 1) p.push([x, floorAt(CHAMBER.z0 + 1), CHAMBER.z0 + 1]);
-    if (zEnd > CHAMBER.z1 - 0.5) p.push([BLIND.x1 - 0.12, floorAt(CHAMBER.z1 - 0.5), CHAMBER.z1 - 0.5]);
+    if (zEnd > CHAMBER.z1 - 0.5) p.push([cutX(CHAMBER.z1 - 0.5), floorAt(CHAMBER.z1 - 0.5), CHAMBER.z1 - 0.5]);
   }
-  p.push([p[p.length - 1][0], floorAt(zEnd), zEnd]);
+  p.push([cutX(zEnd), floorAt(zEnd), zEnd]);
   const cum = [0];
   for (let i = 1; i < p.length; i++) cum.push(cum[i - 1] + Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1], p[i][2] - p[i - 1][2]));
   return {

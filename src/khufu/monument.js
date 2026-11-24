@@ -97,11 +97,13 @@ export function capGeometry(y, yBed = y) {
   const hw = halfWidthAt(y);
   const rects = [];
   for (const el of ELEMENTS) for (const v of el.voids) {
-    let s = null;
-    for (const yy of [y, (y + yBed) / 2, yBed + 0.01]) { const q = sectionAt(v, yy); if (q && (!s || (q.x1 - q.x0) * (q.z1 - q.z0) > (s.x1 - s.x0) * (s.z1 - s.z0))) s = q; }
-    if (!s) continue;
-    const r = { x0: Math.max(-hw, s.x0), x1: Math.min(hw, s.x1), z0: Math.max(-hw, s.z0), z1: Math.min(hw, s.z1) };
-    if (r.x1 > r.x0 && r.z1 > r.z0) rects.push(r);
+    // (a sloped void has a different section at each height: keep every one open)
+    for (const yy of [y, (y + yBed) / 2, yBed + 0.01]) {
+      const s = sectionAt(v, yy);
+      if (!s) continue;
+      const r = { x0: Math.max(-hw, s.x0), x1: Math.min(hw, s.x1), z0: Math.max(-hw, s.z0), z1: Math.min(hw, s.z1) };
+      if (r.x1 > r.x0 && r.z1 > r.z0) rects.push(r);
+    }
   }
   const uniq = (a) => [...new Set(a.map((v) => +v.toFixed(5)))].sort((p, q) => p - q);
   const xs = uniq([-hw, hw, ...rects.flatMap((r) => [r.x0, r.x1])]);
