@@ -38,8 +38,9 @@ export class SpecialWorks {
 
   setSchedule(W) { this.W = W; }
 
-  // t: the timeline's time; walking: the walker is on (plugs hidden)
-  update(t, walking = false) {
+  // t: the timeline's time; walking: the walker is on (plugs hidden); cam: the camera (the
+  // tunnellers are only placed when it is within 300 m of the face)
+  update(t, walking = false, cam = null) {
     const W = this.W;
     if (!W) return;
     const tn = tunnelAt(W, t);
@@ -49,7 +50,7 @@ export class SpecialWorks {
     if (f) { this.face.position.set((f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z); this.face.scale.set(f.x1 - f.x0, f.y1 - f.y0, 1); }
     // the tunnellers: kneeling diggers swing their picks, carriers stoop under their baskets
     let n = 0;
-    if (f) {
+    if (f && (!cam || Math.hypot(cam.position.x - f.x0, cam.position.y - f.y0, cam.position.z - f.z) < 300)) {
       diggersAt(W, t, this.dig);
       for (let i = 0; i < MAX_DIGGERS; i++) {
         const o = i * DIG, d = this.dig;

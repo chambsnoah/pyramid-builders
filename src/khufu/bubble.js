@@ -17,6 +17,7 @@ import { buildTextures as buildAssetTextures, buildMaterials, buildGeometries } 
 import { figures, crewSpec, ACT, POSE, SLED, FIG } from './sim/gangs.js';
 import { FACES } from './sim/ramps/straightZigzag.js';
 import { TAN } from './data.js';
+import { FIGURE } from './sim/works.js';
 
 export const NEAR = 120, NEAR_OUT = 140, FAR = 700, BUDGET = 1500;
 
@@ -33,16 +34,10 @@ function sledGeometry() {
   for (const x of [-0.42, 0.42]) parts.push(new THREE.BoxGeometry(0.12, 0.1, 0.12).translate(x, 0.2, 0.52));
   return mergeGeometries(parts.map((g) => g.toNonIndexed()));
 }
-// a man seen from afar: body, kilt and head, 1.7 m, with vertex colours
+// a man seen from afar: body, kilt and head, 1.82 m, with vertex colours (FIGURE in sim/works.js)
 export function farFigureGeometry() {
   const paint = (g, c) => { const col = new THREE.Color(c), n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) col.toArray(a, i * 3); g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g.toNonIndexed(); };
-  return mergeGeometries([
-    paint(new THREE.CylinderGeometry(0.07, 0.06, 0.85, 5).translate(-0.09, 0.42, 0), 0x9a6a45),
-    paint(new THREE.CylinderGeometry(0.07, 0.06, 0.85, 5).translate(0.09, 0.42, 0), 0x9a6a45),
-    paint(new THREE.CylinderGeometry(0.17, 0.22, 0.35, 6).translate(0, 0.9, 0), 0xf0e8d6),
-    paint(new THREE.CylinderGeometry(0.17, 0.14, 0.55, 6).translate(0, 1.32, 0), 0x9a6a45),
-    paint(new THREE.SphereGeometry(0.12, 6, 4).translate(0, 1.7, 0), 0x2a1c14),
-  ]);
+  return mergeGeometries(FIGURE.map((p) => paint((p.sphere ? new THREE.SphereGeometry(...p.sphere) : new THREE.CylinderGeometry(...p.cyl)).translate(...p.at), p.color)));
 }
 
 const M4 = new THREE.Matrix4(), Q = new THREE.Quaternion(), E3 = new THREE.Euler(0, 0, 0, 'YXZ'), V = new THREE.Vector3(), SC = new THREE.Vector3();

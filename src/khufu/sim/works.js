@@ -153,40 +153,84 @@ export function tunnelAt(W, t) {
 }
 
 // The tunnellers at time t: up to MAX_DIGGERS figures, DIG numbers each (x, y, z, yaw, pose,
-// lean, drop) with pose 0 kneeling at the face (cutting), 1 walking with a basket of spoil,
+// lean, drop) with pose 0 crouched at the face (cutting), 1 walking with a basket of spoil,
 // 2 hidden; each bends forward as far as the roof over him makes him. Diggers work
 // at the face; spoil carriers walk between it and the mouth of the cut, on the passage floor.
 export const MAX_DIGGERS = 7;
-export const DIG = 7; // numbers per tunneller: x, y (feet), z, yaw, pose, lean (rad, forward), drop (m)
-// the figure drawn for a tunneller (bubble.js farFigureGeometry: 1.82 m to the top of the
-// head) and its scale; a figure leans forward about its feet
-export const FIG_H = 1.82, FIG_S = 0.9;
-const CUT_VOIDS = [DESC, HPASS, CHAMBER, BLIND];
-// the ceiling over (x, z) of the cut a man standing at height y is in (the lowest of the
-// voids there whose floor is near his feet: where two meet, the lower roof counts)
-export function cutCeiling(x, z, y) {
-  let c = Infinity;
-  for (const v of CUT_VOIDS) {
-    if (x < v.x0 || x > v.x1 || z < v.z0 || z > v.z1 || Math.abs(floorY(v, z) - y) > 0.6) continue;
-    c = Math.min(c, ceilY(v, z));
+export const DIG = 7; // numbers per tunneller: x, y (floor under his feet), z, yaw, pose, lean (rad, forward), drop (m)
+// The figure drawn for a tunneller (and for a far-off sled hauler, bubble.js): legs, kilt,
+// body and head, as three.js cylinders [radius top, radius bottom, height, segments] and a
+// sphere [radius, w, h], each centred at `at`, with its colour. 1.82 m to the top of the head.
+export const FIGURE = [
+  { cyl: [0.07, 0.06, 0.85, 5], at: [-0.09, 0.42, 0], color: 0x9a6a45 },
+  { cyl: [0.07, 0.06, 0.85, 5], at: [0.09, 0.42, 0], color: 0x9a6a45 },
+  { cyl: [0.17, 0.22, 0.35, 6], at: [0, 0.9, 0], color: 0xf0e8d6 },
+  { cyl: [0.17, 0.14, 0.55, 6], at: [0, 1.32, 0], color: 0x9a6a45 },
+  { sphere: [0.12, 6, 4], at: [0, 1.7, 0], color: 0x2a1c14 },
+];
+export const FIG_S = 0.9; // tunnellers are drawn a little small
+// The drawn figure's points: every vertex of its cylinders' end rings (three.js puts ring
+// vertex k at x = r·sin(2πk/n), z = r·cos(2πk/n)); the head, a sphere, is handled whole.
+const FIG_PTS = FIGURE.filter((p) => p.cyl).flatMap((p) => {
+  const [rt, rb, h, n] = p.cyl, out = [];
+  for (const [dy, r] of [[h / 2, rt], [-h / 2, rb]]) for (let k = 0; k < n; k++) {
+    const a = (2 * Math.PI * k) / n;
+    out.push([p.at[0] + r * Math.sin(a), p.at[1] + dy, p.at[2] + r * Math.cos(a)]);
   }
+  return out;
+});
+const HEAD = FIGURE.find((p) => p.sphere);
+// a local point of the figure turned as the page turns it (Euler(lean, yaw, 0, 'YXZ'), so
+// leaning forward about the feet, then heading yaw) and scaled: [dx, dy, dz] from its origin
+function pose(q, lean, yaw, out) {
+  const c = Math.cos(lean), s = Math.sin(lean), y1 = q[1] * c - q[2] * s, z1 = q[1] * s + q[2] * c;
+  out[0] = FIG_S * (q[0] * Math.cos(yaw) + z1 * Math.sin(yaw)); out[1] = FIG_S * y1; out[2] = FIG_S * (-q[0] * Math.sin(yaw) + z1 * Math.cos(yaw));
+  return out;
+}
+const PQ = [0, 0, 0];
+const CUT_VOIDS = [DESC, HPASS, CHAMBER, BLIND];
+// the roof of the cut over (x, z): the lowest of its voids there (none of them lies over
+// another; where two meet, the lower roof counts)
+export function cutCeiling(x, z) {
+  let c = Infinity;
+  for (const v of CUT_VOIDS) if (x >= v.x0 && x <= v.x1 && z >= v.z0 && z <= v.z1) c = Math.min(c, ceilY(v, z));
   return c;
 }
-// the top of the head of a figure at its feet (x, y, z), heading yaw, leaning by `lean`,
-// sunk by `drop` (kneeling): [x, y, z]
-export function headOf(x, y, z, yaw, lean, drop) {
-  const r = FIG_H * FIG_S;
-  return [x + r * Math.sin(lean) * Math.sin(yaw), y - drop + r * Math.cos(lean), z + r * Math.sin(lean) * Math.cos(yaw)];
+// The pose of a tunneller wanting to stand at (x, zWant) facing yaw (0: south, toward the
+// face; π: north, back up the cut), leaning at least `lean`. The figure is set down so the
+// lowest of its points just touches the floor under it, and it leans further forward until
+// every point is 3 cm under the roof over it (a man stoops in the 1.2 m passages and goes
+// bent double in the 0.91 m horizontal passage and the 0.75 m blind passage). With `face`,
+// he also stands back far enough that nothing of him reaches into the rock ahead.
+// Returns [z, origin y, lean], or null.
+function fitPose(x, zWant, yaw, lean, face = Infinity) {
+  // the least lean that fits, by bisection (a deeper stoop only ever lowers him), checked
+  if (tryPose(x, zWant, yaw, lean, face)) return FIT.slice();
+  let lo = lean, hi = 1.4;
+  if (!tryPose(x, zWant, yaw, hi, face)) return null; // no pose fits here (at the very foot of the slope into the low passage): not drawn
+  for (let k = 0; k < 7; k++) { const m = (lo + hi) / 2; if (tryPose(x, zWant, yaw, m, face)) hi = m; else lo = m; }
+  tryPose(x, zWant, yaw, hi, face);
+  return FIT.slice();
 }
-// the least forward lean (from `lean` up) that keeps the head 5 cm under the roof: in the
-// 1.2 m passages a man stoops, in the 0.91 m horizontal passage and the 0.75 m blind
-// passage he goes bent double or on his knees
-function fitLean(x, y, z, yaw, lean, drop) {
-  for (let a = lean; a < 1.45; a += 0.02) {
-    const h = headOf(x, y, z, yaw, a, drop);
-    if (h[1] <= Math.min(cutCeiling(x, z, y), cutCeiling(h[0], h[2], y)) - 0.05) return a;
-  }
-  return 1.45;
+const FIT = [0, 0, 0];
+// one lean: where he stands, set down on the floor; true (and FIT = [z, origin y, lean]) if it fits
+function tryPose(x, zWant, yaw, a, face) {
+  // how far ahead (in z) the figure reaches, and so where it stands
+  let front = -Infinity;
+  for (const q of FIG_PTS) front = Math.max(front, pose(q, a, yaw, PQ)[2]);
+  pose(HEAD.at, a, yaw, PQ); front = Math.max(front, PQ[2] + FIG_S * HEAD.sphere[0]);
+  const z = Math.min(zWant, face - 0.08 - front);
+  // set down on the floor
+  let oy = -Infinity;
+  for (const q of FIG_PTS) { pose(q, a, yaw, PQ); oy = Math.max(oy, floorAt(z + PQ[2]) - PQ[1]); }
+  FIT[0] = z; FIT[1] = oy; FIT[2] = a;
+  // under the roof
+  for (const q of FIG_PTS) { pose(q, a, yaw, PQ); if (oy + PQ[1] > cutCeiling(x + PQ[0], z + PQ[2]) - 0.03) return false; }
+  // the head: its top under the lowest roof over any part of it
+  pose(HEAD.at, a, yaw, PQ);
+  const r = FIG_S * HEAD.sphere[0], hx = x + PQ[0], hz = z + PQ[2];
+  const roof = Math.min(cutCeiling(hx, hz), cutCeiling(hx - r, hz), cutCeiling(hx + r, hz), cutCeiling(hx, hz - r), cutCeiling(hx, hz + r));
+  return oy + PQ[1] + r <= roof - 0.03;
 }
 const CARRY_PERIOD = 360; // s for a carrier to go down to the face and back
 // the chamber is cut to its floor east of here (west of it stand the uncut terraces, the
@@ -196,7 +240,8 @@ export function diggersAt(W, t, out) {
   const tn = tunnelAt(W, t);
   for (let i = 0; i < MAX_DIGGERS; i++) out[i * DIG + 4] = 2;
   if (!tn.face) return 0;
-  const f = tn.face, wide = f.x1 - f.x0 > 2 && f.z > CHAMBER.z0 + 1;
+  // (three across the heading once it is 2.6 m into the chamber, room for them to stand back)
+  const f = tn.face, wide = f.x1 - f.x0 > 2 && f.z > CHAMBER.z0 + 2.6;
   // diggers (figures 0–2): one at a passage face; across the chamber heading, three, where
   // it is cut down to the floor (the east part: west of CUT_X0 the rock was never cut below
   // the roof terraces). The first stays on the passage axis, so it never jumps.
@@ -204,20 +249,25 @@ export function diggersAt(W, t, out) {
   // passage, which leaves the chamber farther west, east of the rock ledge in front of it)
   for (let i = 0; i < (wide ? 3 : 1); i++) {
     const x = i === 0 ? cutX(f.z) : [6.0, 4.4][i - 1];
-    const o = i * DIG, z = f.z - 0.7, y = floorAt(z), drop = 0.45;
-    const swing = 0.35 + 0.3 * Math.max(0, Math.sin(t * 2.6 + i * 1.7)); // kneeling, swinging a pick
-    out[o] = x; out[o + 1] = y; out[o + 2] = z; out[o + 3] = 0; out[o + 4] = 0;
-    out[o + 5] = fitLean(x, y, z, 0, swing, drop); out[o + 6] = drop;
+    const o = i * DIG, swing = 0.6 + 0.3 * Math.max(0, Math.sin(t * 2.6 + i * 1.7)); // crouched at the face, swinging a pick
+    const fit = fitPose(x, f.z - 0.5, 0, swing, f.z);
+    if (!fit) continue;
+    const [z, oy, a] = fit;
+    out[o] = x; out[o + 1] = floorAt(z); out[o + 2] = z; out[o + 3] = 0; out[o + 4] = 0; out[o + 5] = a; out[o + 6] = floorAt(z) - oy;
   }
   // spoil carriers (figures 3–6) along the cut from its mouth (at the bedrock surface) to the face
   const pts = cutLine(tn);
   const L = pts.cum[pts.cum.length - 1], nc = MAX_DIGGERS - 3;
-  for (let j = 0; j < nc; j++) {
+  for (let j = 0; j < nc && L > 2.5; j++) { // (no carriers until the cut is long enough to stand in)
     const ph = (t / CARRY_PERIOD + j / nc) % 1, down = ph < 0.5;
-    const s = Math.max(0, L - 1.6) * (down ? ph * 2 : 2 - ph * 2); // 0 at the mouth
-    const p = pts.at(s), o = (3 + j) * DIG, x = p[0] + (j % 2 ? 0.1 : -0.1), yaw = down ? 0 : Math.PI;
-    out[o] = x; out[o + 1] = p[1]; out[o + 2] = p[2]; out[o + 3] = yaw; out[o + 4] = 1;
-    out[o + 5] = fitLean(x, p[1], p[2], yaw, 0.45, 0.1); out[o + 6] = 0.1; // stooping under the basket
+    const s = Math.max(0, L - 2.2) * (down ? ph * 2 : 2 - ph * 2); // 0 at the mouth; turns back short of the diggers
+    const p = pts.at(s), o = (3 + j) * DIG, yaw = down ? 0 : Math.PI;
+    // two lines, to pass each other, but single file in the 0.75 m blind passage
+    const x = p[0] + (j % 2 ? 0.1 : -0.1) * Math.min(1, Math.max(0, Z_ACROSS1 - p[2]));
+    const fit = fitPose(x, p[2], yaw, 0.45); // stooping under the basket
+    if (!fit) continue;
+    const [z, oy, a] = fit;
+    out[o] = x; out[o + 1] = floorAt(z); out[o + 2] = z; out[o + 3] = yaw; out[o + 4] = 1; out[o + 5] = a; out[o + 6] = floorAt(z) - oy;
   }
   return MAX_DIGGERS;
 }
@@ -227,7 +277,7 @@ function floorAt(z) { return z <= LEVELS.descendingBottom.z ? Math.max(floorY(DE
 // works over toward the blind passage (east of the rock ledge in front of it), reaching it
 // at the corner where the way turns into that passage. The face end of the way and the
 // corner move together, so the way only ever lengthens a little at a time.
-const X_AXIS = (DESC.x0 + DESC.x1) / 2, X_BLIND = BLIND.x1 - 0.12;
+const X_AXIS = (DESC.x0 + DESC.x1) / 2, X_BLIND = (BLIND.x0 + BLIND.x1) / 2 + 0.1;
 const Z_ACROSS0 = CHAMBER.z0 + 1, Z_ACROSS1 = CHAMBER.z1 - 0.5;
 function cutX(z) { return X_AXIS + (X_BLIND - X_AXIS) * Math.min(1, Math.max(0, (z - Z_ACROSS0) / (Z_ACROSS1 - Z_ACROSS0))); }
 // polyline along the floor of the cut from its mouth to the face, with arc lengths

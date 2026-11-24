@@ -409,7 +409,7 @@ function frame() {
   timeline.tick(dt);
   if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
   // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
-  if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled); if (tn) { tunnelNow = tn; applyReveal(); } }
+  if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled, camera); if (tn) { tunnelNow = tn; applyReveal(); } }
   if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);

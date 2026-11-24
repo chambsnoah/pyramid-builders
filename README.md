@@ -104,7 +104,7 @@ Each room is built in its own order, and can be watched while it is built (`src/
   - The King's Chamber gets its granite beams this way, and so do the five relieving chambers above it (the top one with its gable), the Queen's Chamber and the Grand Gallery's roof.
   - A chamber stays open from above until its beams are on.
 - **The tunnel into the bedrock.** From the first day, a crew cuts the descending passage down from where it enters the rock, then the horizontal passage, the subterranean chamber and the blind passage south of it.
-  - In X-ray or walking you see the rock face, diggers kneeling at it and spoil carriers going up and down the cut.
+  - In X-ray or walking you see the rock face, diggers crouched at it and spoil carriers going up and down the cut, each bent as low as the roof over him makes him (double in the 0.91 m horizontal passage and the 0.75 m blind passage).
   - The work stops, with the chamber unfinished as it is at Giza, on the day the course where the ascending passage begins is opened (day 521).
   - That gives about 0.24 m of passage and 2.7 m³ of chamber a working day.
 - **The granite plugs.** Three plugs are lowered into the foot of the Grand Gallery once its lower walls stand around them (day 2,697), before it is roofed over them. They rest on the floor of its central channel.
