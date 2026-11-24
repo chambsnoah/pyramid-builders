@@ -152,17 +152,49 @@ export function tunnelAt(W, t) {
   return out;
 }
 
-// The tunnellers at time t: up to MAX_DIGGERS figures, each [x, y, z, yaw, pose] with pose
-// 0 kneeling at the face (cutting), 1 walking with a basket of spoil, 2 hidden. Diggers work
+// The tunnellers at time t: up to MAX_DIGGERS figures, DIG numbers each (x, y, z, yaw, pose,
+// lean, drop) with pose 0 kneeling at the face (cutting), 1 walking with a basket of spoil,
+// 2 hidden; each bends forward as far as the roof over him makes him. Diggers work
 // at the face; spoil carriers walk between it and the mouth of the cut, on the passage floor.
 export const MAX_DIGGERS = 7;
+export const DIG = 7; // numbers per tunneller: x, y (feet), z, yaw, pose, lean (rad, forward), drop (m)
+// the figure drawn for a tunneller (bubble.js farFigureGeometry: 1.82 m to the top of the
+// head) and its scale; a figure leans forward about its feet
+export const FIG_H = 1.82, FIG_S = 0.9;
+const CUT_VOIDS = [DESC, HPASS, CHAMBER, BLIND];
+// the ceiling over (x, z) of the cut a man standing at height y is in (the lowest of the
+// voids there whose floor is near his feet: where two meet, the lower roof counts)
+export function cutCeiling(x, z, y) {
+  let c = Infinity;
+  for (const v of CUT_VOIDS) {
+    if (x < v.x0 || x > v.x1 || z < v.z0 || z > v.z1 || Math.abs(floorY(v, z) - y) > 0.6) continue;
+    c = Math.min(c, ceilY(v, z));
+  }
+  return c;
+}
+// the top of the head of a figure at its feet (x, y, z), heading yaw, leaning by `lean`,
+// sunk by `drop` (kneeling): [x, y, z]
+export function headOf(x, y, z, yaw, lean, drop) {
+  const r = FIG_H * FIG_S;
+  return [x + r * Math.sin(lean) * Math.sin(yaw), y - drop + r * Math.cos(lean), z + r * Math.sin(lean) * Math.cos(yaw)];
+}
+// the least forward lean (from `lean` up) that keeps the head 5 cm under the roof: in the
+// 1.2 m passages a man stoops, in the 0.91 m horizontal passage and the 0.75 m blind
+// passage he goes bent double or on his knees
+function fitLean(x, y, z, yaw, lean, drop) {
+  for (let a = lean; a < 1.45; a += 0.02) {
+    const h = headOf(x, y, z, yaw, a, drop);
+    if (h[1] <= Math.min(cutCeiling(x, z, y), cutCeiling(h[0], h[2], y)) - 0.05) return a;
+  }
+  return 1.45;
+}
 const CARRY_PERIOD = 360; // s for a carrier to go down to the face and back
 // the chamber is cut to its floor east of here (west of it stand the uncut terraces, the
 // `solids` of the subterranean chamber in data.js)
 const CUT_X0 = Math.max(...el('subterranean').solids.map((s) => s.x1));
 export function diggersAt(W, t, out) {
   const tn = tunnelAt(W, t);
-  for (let i = 0; i < MAX_DIGGERS; i++) out[i * 5 + 4] = 2;
+  for (let i = 0; i < MAX_DIGGERS; i++) out[i * DIG + 4] = 2;
   if (!tn.face) return 0;
   const f = tn.face, wide = f.x1 - f.x0 > 2 && f.z > CHAMBER.z0 + 1;
   // diggers (figures 0–2): one at a passage face; across the chamber heading, three, where
@@ -172,8 +204,10 @@ export function diggersAt(W, t, out) {
   // passage, which leaves the chamber farther west, east of the rock ledge in front of it)
   for (let i = 0; i < (wide ? 3 : 1); i++) {
     const x = i === 0 ? cutX(f.z) : [6.0, 4.4][i - 1];
-    const o = i * 5, z = f.z - 0.7;
-    out[o] = x; out[o + 1] = floorAt(z); out[o + 2] = z; out[o + 3] = 0; out[o + 4] = 0;
+    const o = i * DIG, z = f.z - 0.7, y = floorAt(z), drop = 0.45;
+    const swing = 0.35 + 0.3 * Math.max(0, Math.sin(t * 2.6 + i * 1.7)); // kneeling, swinging a pick
+    out[o] = x; out[o + 1] = y; out[o + 2] = z; out[o + 3] = 0; out[o + 4] = 0;
+    out[o + 5] = fitLean(x, y, z, 0, swing, drop); out[o + 6] = drop;
   }
   // spoil carriers (figures 3–6) along the cut from its mouth (at the bedrock surface) to the face
   const pts = cutLine(tn);
@@ -181,8 +215,9 @@ export function diggersAt(W, t, out) {
   for (let j = 0; j < nc; j++) {
     const ph = (t / CARRY_PERIOD + j / nc) % 1, down = ph < 0.5;
     const s = Math.max(0, L - 1.6) * (down ? ph * 2 : 2 - ph * 2); // 0 at the mouth
-    const p = pts.at(s), o = (3 + j) * 5;
-    out[o] = p[0] + (j % 2 ? 0.1 : -0.1); out[o + 1] = p[1]; out[o + 2] = p[2]; out[o + 3] = down ? 0 : Math.PI; out[o + 4] = 1;
+    const p = pts.at(s), o = (3 + j) * DIG, x = p[0] + (j % 2 ? 0.1 : -0.1), yaw = down ? 0 : Math.PI;
+    out[o] = x; out[o + 1] = p[1]; out[o + 2] = p[2]; out[o + 3] = yaw; out[o + 4] = 1;
+    out[o + 5] = fitLean(x, p[1], p[2], yaw, 0.45, 0.1); out[o + 6] = 0.1; // stooping under the basket
   }
   return MAX_DIGGERS;
 }

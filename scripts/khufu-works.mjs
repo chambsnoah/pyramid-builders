@@ -14,7 +14,7 @@
 //    lower end of the ascending passage at the end.
 import { runFull, DAY, YEAR, ELEM, tagOf } from '../src/khufu/sim/index.js';
 import { runSummary } from '../src/khufu/sim/view.js';
-import { worksSchedule, tunnelAt, diggersAt, plugsAt, MAX_DIGGERS, PLUGS, PLUG_SIZE } from '../src/khufu/sim/works.js';
+import { worksSchedule, tunnelAt, diggersAt, plugsAt, headOf, MAX_DIGGERS, DIG, PLUGS, PLUG_SIZE } from '../src/khufu/sim/works.js';
 import { COURSES, ELEMENTS, LEVELS, floorY, ceilY } from '../src/khufu/data.js';
 
 let failed = 0;
@@ -79,8 +79,8 @@ function play(name, from, seconds, fn, vmax) {
   }
   check(worst <= vmax, `${name}: fastest move ${worst.toFixed(3)} m/s (≤ ${vmax}) ${worst ? `at ${day(at)}` : ''}`);
 }
-const buf = new Float32Array(MAX_DIGGERS * 5), pbuf = new Float32Array(PLUGS.length * 5);
-const people = (t) => { diggersAt(W, t, buf); return Array.from({ length: MAX_DIGGERS }, (_, i) => (buf[i * 5 + 4] === 2 ? null : [buf[i * 5], buf[i * 5 + 1], buf[i * 5 + 2]])); };
+const buf = new Float32Array(MAX_DIGGERS * DIG), pbuf = new Float32Array(PLUGS.length * 5);
+const people = (t) => { diggersAt(W, t, buf); return Array.from({ length: MAX_DIGGERS }, (_, i) => (buf[i * DIG + 4] === 2 ? null : [buf[i * DIG], buf[i * DIG + 1], buf[i * DIG + 2]])); };
 const plugs = (t) => { plugsAt(W, t, pbuf); return PLUGS.map((_, k) => (pbuf[k * 5 + 4] ? [pbuf[k * 5], pbuf[k * 5 + 1], pbuf[k * 5 + 2]] : null)); };
 for (const [i, st] of W.stages.entries()) play(`tunnellers, ${st.name}`, (st.t0 + st.t1) / 2, 900, people, 1.6);
 play('tunnellers, from the descending passage into the horizontal one', W.stages[1].t0 - 450, 900, people, 1.6);
@@ -103,13 +103,21 @@ check(back === 0 && !tunnelAt(W, W.stop + 1).face, 'the working face only advanc
 {
   const voids = ['descending', 'subterranean'].flatMap((id) => ELEMENTS.find((e) => e.id === id).voids);
   const solids = ELEMENTS.find((e) => e.id === 'subterranean').solids;
-  let bad = 0, n = 0;
+  let bad = 0, n = 0, tall = 0;
   for (let t = 0; t < W.stop; t += DAY / 3) {
     const tn = tunnelAt(W, t), face = tn.desc < Infinity ? tn.desc : tn.sub;
     diggersAt(W, t, buf);
     for (let i = 0; i < MAX_DIGGERS; i++) {
-      if (buf[i * 5 + 4] === 2) continue;
-      const x = buf[i * 5], y = buf[i * 5 + 1], z = buf[i * 5 + 2];
+      const o = i * DIG;
+      if (buf[o + 4] === 2) continue;
+      const x = buf[o], y = buf[o + 1], z = buf[o + 2];
+      // the whole figure under the roof: its head, and its middle, under every roof over them
+      // (each void whose floor is near his feet, so where two passages meet the lower counts)
+      for (const k of [1, 0.5]) {
+        const h = headOf(x, y, z, buf[o + 3], buf[o + 5], buf[o + 6]), px = x + (h[0] - x) * k, pz = z + (h[2] - z) * k, py = y - buf[o + 6] + (h[1] - y + buf[o + 6]) * k;
+        const roof = Math.min(...voids.filter((v) => px >= v.x0 && px <= v.x1 && pz >= v.z0 && pz <= v.z1 && Math.abs(floorY(v, pz) - y) < 0.6).map((v) => ceilY(v, pz)));
+        if (py > roof) { tall++; if (tall < 4) console.log(`    tunneller ${i} on ${day(t)}: ${k === 1 ? 'head' : 'middle'} ${(py - roof).toFixed(2)} m into the roof`); }
+      }
       n++;
       const inVoid = voids.some((v) => x >= v.x0 && x <= v.x1 && z >= v.z0 - 0.05 && z <= v.z1 + 0.05 && y >= floorY(v, z) - 0.05 && y < ceilY(v, z));
       const inRock = z > face + 0.01 || solids.some((v) => x > v.x0 + 0.05 && x < v.x1 - 0.05 && z > v.z0 && z < v.z1 && y < ceilY(v, z) - 0.05);
@@ -117,6 +125,7 @@ check(back === 0 && !tunnelAt(W, W.stop + 1).face, 'the working face only advanc
     }
   }
   check(n > 1000 && bad === 0, `the tunnellers stand in the cut, never in the rock (${n} placings)`);
+  check(tall === 0, 'every tunneller fits under the roof: stooping in the passages, bent double in the 0.91 m horizontal passage and the 0.75 m blind passage');
 }
 
 // ---- 3. tunnelling rate ------------------------------------------------------------------

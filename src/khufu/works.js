@@ -10,7 +10,7 @@
 // Everything is a pure function of the time, so seeking or playing at any speed shows the
 // same thing.
 import * as THREE from 'three';
-import { tunnelAt, diggersAt, plugsAt, MAX_DIGGERS, PLUGS, PLUG_SIZE } from './sim/works.js';
+import { tunnelAt, diggersAt, plugsAt, MAX_DIGGERS, DIG, FIG_S, PLUGS, PLUG_SIZE } from './sim/works.js';
 import { farFigureGeometry } from './bubble.js';
 import { TX } from './textures.js';
 
@@ -31,7 +31,7 @@ export class SpecialWorks {
     this.plugs = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ map: TX.granite.map, normalMap: TX.granite.normalMap, roughness: 0.45, color: 0xc9a59b }), PLUGS.length);
     this.plugs.name = 'plugs'; this.plugs.count = 0; this.plugs.frustumCulled = false; this.plugs.castShadow = true;
     this.group.add(this.plugs);
-    this.dig = new Float32Array(MAX_DIGGERS * 5);
+    this.dig = new Float32Array(MAX_DIGGERS * DIG);
     this.plug = new Float32Array(PLUGS.length * 5);
     this.info = { stage: -1, diggers: 0, plugs: 0 };
   }
@@ -47,16 +47,16 @@ export class SpecialWorks {
     const f = tn.face;
     this.face.visible = !!f;
     if (f) { this.face.position.set((f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z); this.face.scale.set(f.x1 - f.x0, f.y1 - f.y0, 1); }
-    // the tunnellers: kneeling diggers swing their picks, carriers stoop under the low roof
+    // the tunnellers: kneeling diggers swing their picks, carriers stoop under their baskets
     let n = 0;
     if (f) {
       diggersAt(W, t, this.dig);
       for (let i = 0; i < MAX_DIGGERS; i++) {
-        const o = i * 5, pose = this.dig[o + 4];
-        if (pose === 2) continue;
-        const kneel = pose === 0, lean = kneel ? 0.35 + 0.3 * Math.max(0, Math.sin(t * 2.6 + i * 1.7)) : 0.45;
-        E3.set(lean, this.dig[o + 3], 0); Q.setFromEuler(E3);
-        M4.compose(V.set(this.dig[o], this.dig[o + 1] - (kneel ? 0.45 : 0.1), this.dig[o + 2]), Q, SC.set(0.9, 0.9, 0.9));
+        const o = i * DIG, d = this.dig;
+        if (d[o + 4] === 2) continue;
+        // (the lean and the kneel come from the schedule: low enough for the roof over him)
+        E3.set(d[o + 5], d[o + 3], 0); Q.setFromEuler(E3);
+        M4.compose(V.set(d[o], d[o + 1] - d[o + 6], d[o + 2]), Q, SC.setScalar(FIG_S));
         this.diggers.setMatrixAt(n++, M4);
       }
     }
