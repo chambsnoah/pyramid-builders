@@ -50,7 +50,7 @@ export class SpecialWorks {
     if (f) { this.face.position.set((f.x0 + f.x1) / 2, (f.y0 + f.y1) / 2, f.z); this.face.scale.set(f.x1 - f.x0, f.y1 - f.y0, 1); }
     // the tunnellers: kneeling diggers swing their picks, carriers stoop under their baskets
     let n = 0;
-    if (f && (!cam || Math.hypot(cam.position.x - f.x0, cam.position.y - f.y0, cam.position.z - f.z) < 300)) {
+    if (f && (!cam || Math.hypot(cam.position.x - (f.x0 + f.x1) / 2, cam.position.y - (f.y0 + f.y1) / 2, cam.position.z - f.z) < 300)) {
       diggersAt(W, t, this.dig);
       for (let i = 0; i < MAX_DIGGERS; i++) {
         const o = i * DIG, d = this.dig;
