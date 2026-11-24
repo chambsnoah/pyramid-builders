@@ -34,7 +34,7 @@ function sledGeometry() {
   return mergeGeometries(parts.map((g) => g.toNonIndexed()));
 }
 // a man seen from afar: body, kilt and head, 1.7 m, with vertex colours
-function farFigureGeometry() {
+export function farFigureGeometry() {
   const paint = (g, c) => { const col = new THREE.Color(c), n = g.attributes.position.count, a = new Float32Array(n * 3); for (let i = 0; i < n; i++) col.toArray(a, i * 3); g.setAttribute('color', new THREE.BufferAttribute(a, 3)); return g.toNonIndexed(); };
   return mergeGeometries([
     paint(new THREE.CylinderGeometry(0.07, 0.06, 0.85, 5).translate(-0.09, 0.42, 0), 0x9a6a45),
@@ -171,6 +171,9 @@ export class Bubble {
       M4.compose(V.set(o[0], o[1], o[2]), Q, SC.set((L ? L[0] : 1.2) + 0.35, 1, (L ? L[2] : 1.8) + 0.8));
       S.setMatrixAt(ns++, M4);
       if (L && o[8]) {
+        // the stone has its own heading (a roof beam keeps pointing across its opening while
+        // the crew turn round); it never pitches off the sled's slope except on the sled
+        if (o[9] !== o[3]) { E3.set(0, o[9], 0); Q.setFromEuler(E3); }
         M4.compose(V.set(o[5], o[6], o[7]), Q, SC.set(L[0], L[1], L[2]));
         St.setMatrixAt(nst, M4); St.setColorAt(nst, STONE_COLOR[L[3]]); nst++;
       }

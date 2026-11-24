@@ -13,6 +13,7 @@ const EXTERIOR = [
   plane(TAN, 1, 0, -TAN * HALF), plane(-TAN, 1, 0, -TAN * HALF),
 ];
 const GROUND = plane(0, 1, 0, 0);
+const OPEN = 1e6; // a cut plane this far away cuts nothing
 
 function polyBounds(p) {
   const b = { x0: Infinity, x1: -Infinity, y0: Infinity, y1: -Infinity, z0: Infinity, z1: -Infinity };
@@ -84,6 +85,14 @@ export class Rooms {
       granite: std({ map: TX.granite.map, normalMap: TX.granite.normalMap, roughness: 0.42, normalScale: new THREE.Vector2(0.5, 0.5) }),
       rock: std({ map: TX.rock.map, normalMap: TX.rock.normalMap, normalScale: new THREE.Vector2(0.6, 0.6), roughness: 0.95 }),
     };
+    // each room its own copy of the materials, so each can be cut at its own height (it
+    // rises with the course being laid) and the tunnel at its working face (setReveal)
+    this.planes = {}; this.elMats = {};
+    for (const el of ELEMENTS) {
+      const pl = [new THREE.Plane(new THREE.Vector3(0, -1, 0), OPEN), new THREE.Plane(new THREE.Vector3(0, 0, -1), OPEN)];
+      this.planes[el.id] = pl;
+      this.elMats[el.id] = Object.fromEntries(Object.entries(this.mats).map(([k, m]) => { const c = m.clone(); c.clippingPlanes = pl; return [k, c]; }));
+    }
     const all = [];
     for (const el of ELEMENTS) for (const v of el.voids) all.push({ v, el, planes: volumePlanes(v), bb: volumeBounds(v) });
     this.meshes = {}; // element id -> [mesh]
@@ -118,7 +127,7 @@ export class Rooms {
       }
       if (el.sarcophagus) this.solidBoxes.push(sarcophagus(buf('granite'), el.sarcophagus, { w: 0.6, h: 0.5, mode: 'level', y0: el.sarcophagus.y }));
       this.meshes[el.id] = Object.entries(bufs).map(([m, b]) => {
-        const mesh = new THREE.Mesh(b.geometry(), this.mats[m]);
+        const mesh = new THREE.Mesh(b.geometry(), this.elMats[el.id][m]);
         mesh.name = `${el.id}:${m}`; mesh.receiveShadow = true; mesh.userData.element = el;
         this.group.add(mesh);
         return mesh;
@@ -127,17 +136,31 @@ export class Rooms {
   }
 
   // hide everything above y (a section through an unfinished pyramid); null clears it
-  setSection(y) {
-    const planes = y == null ? [] : [new THREE.Plane(new THREE.Vector3(0, -1, 0), y)];
-    for (const m of Object.values(this.mats)) { m.clippingPlanes = planes; m.needsUpdate = true; }
+  setSection(y) { this.setReveal(y); }
+  // Each room cut at its own height: `rise` (element id -> y) for the rooms whose lining is
+  // being set in the course being laid (WorkingCourse.rooms), else y, the top of the finished
+  // courses (null: the finished monument, nothing cut). `tunnel` (works.js tunnelAt) cuts
+  // the descending passage and the subterranean works at their working faces: everything
+  // south of the face is still rock.
+  setReveal(y, rise = {}, tunnel = null) {
+    for (const el of ELEMENTS) {
+      const [py, pz] = this.planes[el.id];
+      py.constant = y == null ? OPEN : rise[el.id] ?? y;
+      let face = OPEN;
+      if (tunnel && el.id === 'descending') face = tunnel.desc;
+      if (tunnel && el.id === 'subterranean') face = tunnel.sub;
+      pz.constant = face === Infinity ? OPEN : face === -Infinity ? -OPEN : face;
+      for (const m of this.meshes[el.id]) m.visible = face !== -Infinity;
+    }
   }
   // seen from outside, the interior is dark (the sky light is not shadowed, so it is dimmed here)
   setBrightness(k) {
     if (Math.abs(k - (this.brightness ?? 1)) < 0.005) return;
     this.brightness = k;
-    for (const m of Object.values(this.mats)) m.color.setScalar(k);
+    for (const m of this.allMats()) m.color.setScalar(k);
   }
   setXray(on) {
-    for (const m of Object.values(this.mats)) { m.side = on ? THREE.DoubleSide : THREE.FrontSide; m.needsUpdate = true; }
+    for (const m of this.allMats()) { m.side = on ? THREE.DoubleSide : THREE.FrontSide; m.needsUpdate = true; }
   }
+  allMats() { return [...Object.values(this.mats), ...Object.values(this.elMats).flatMap((o) => Object.values(o))]; }
 }

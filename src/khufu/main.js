@@ -12,6 +12,9 @@ import { Collision } from './collision.js';
 import { Walker } from './walker.js';
 import { WorkingCourse } from './working.js';
 import { Bubble } from './bubble.js';
+import { SLED, FIG } from './sim/gangs.js';
+import { SpecialWorks } from './works.js';
+import { tunnelAt, TUNNEL } from './sim/works.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
 import { StatsPanel } from './statsPanel.js';
 import { DAY, YEAR } from './sim/params.js';
@@ -123,6 +126,7 @@ const collision = new Collision(rooms.solidBoxes);
 const walker = new Walker(camera, renderer.domElement, collision);
 const working = new WorkingCourse(scene);
 const bubble = new Bubble(scene);
+const works = new SpecialWorks(scene);
 
 // room labels for X-ray
 const overlay = new THREE.Group(); overlay.visible = false; scene.add(overlay);
@@ -211,13 +215,18 @@ window.addEventListener('keydown', (e) => {
 const slider = $('courses');
 slider.max = COURSE_COUNT; slider.value = COURSE_COUNT;
 let shownCourses = null; // what setCourses last applied ("built:capstone"), so repeats are skipped
+// the rooms are cut at the top of the finished courses (revealTop), each room in the course
+// being laid at the height its lining has reached there, and the tunnel at its face
+let revealTop = null, tunnelNow = null;
+function applyReveal() { rooms.setReveal(revealTop, working.rooms, tunnelNow); }
 function setCourses(n, capstone = true) {
   const top = monument.setBuiltCourses(n, capstone);
   const shown = `${monument.built}:${monument.capstone}`;
   if (shown === shownCourses) return; // the timeline calls this every frame while playing
   shownCourses = shown;
   collision.topY = top;
-  rooms.setSection(!monument.complete ? top + 0.001 : null);
+  revealTop = !monument.complete ? top + 0.001 : null;
+  applyReveal();
   // new masonry may have risen through the walker (standing on a lower cap): lift it to the
   // nearest floor with room above, or leave walking if there is none
   if (walker.enabled && !walker.passable(walker.pos.x, walker.pos.z, walker.pos.y)) {
@@ -251,6 +260,7 @@ const client = new SimClient({
     window.__khufu.summary = summary; window.__khufu.runMs = timing.ms;
     stats.setRun(summary);
     bubble.reset();
+    works.setSchedule(summary.works);
     const restarted = timeline.ready; // the worker was restarted after a crash: stay where we were
     timeline.setRun(summary);
     let t = summary.endT; // by default, the finished monument (as before the model has run)
@@ -266,6 +276,8 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
+    tunnelNow = client.summary?.works ? tunnelAt(client.summary.works, m.t) : null;
+    applyReveal();
     if (m.gangs) bubble.apply(m.gangs);
     bubble.setVisible(!view.done);
     stats.update(view, m.t, timing);
@@ -314,7 +326,7 @@ function syncBench(n = 60) {
   };
 }
 window.__khufu = {
-  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, working, bubble, perf,
+  THREE, scene, camera, renderer, orbit, monument, rooms, collision, walker, working, bubble, works, perf,
   get timeline() { return timeline; }, get client() { return client; }, get state() { return view; },
   // time seeks through the worker: [{ day, worker ms, round trip ms, … }] for each day in turn
   benchSeek: async (days) => {
@@ -364,7 +376,7 @@ window.__khufu = {
         const o = bubble.bufs[g], p = prev.get(g);
         if (p && p.t < t && p.o.length === o.length) {
           const dt = t - p.t;
-          for (let i = 0; i < o.length; i = i ? i + 7 : 9) {
+          for (let i = 0; i < o.length; i = i ? i + FIG : SLED) {
             const d = Math.hypot(o[i] - p.o[i], o[i + 1] - p.o[i + 1], o[i + 2] - p.o[i + 2]);
             const v = d / dt;
             if (v > worst.v) worst = { v: +v.toFixed(2), d: +d.toFixed(3), g, i, t: +(t / DAY).toFixed(4), act: bubble.acts[g] };
@@ -397,6 +409,7 @@ function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
   timeline.tick(dt);
   if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
+  if (timeline.ready) works.update(timeline.t, walker.enabled);
   if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);
@@ -432,7 +445,9 @@ function frame() {
       if (view && !view.done) {
         const c = view.course;
         $('where').textContent = c && c.ci === COURSE_COUNT ? 'Setting the capstone' : `Laying course ${view.cur + 1} of ${COURSE_COUNT}, ${view.topY.toFixed(1)} m up`;
-        $('note').textContent = `${clockText(timeline.t)} of the build`;
+        const st = works.info.stage;
+        const extra = st >= 0 ? ` · tunnellers cutting the ${TUNNEL[st].name}` : '';
+        $('note').textContent = `${clockText(timeline.t)} of the build${extra}`;
       } else {
         $('where').textContent = `The finished monument, c. 2560 BC`;
         $('note').textContent = `${COURSE_COUNT} courses and a pyramidion, ${HEIGHT} m high on a ${(HALF * 2).toFixed(1)} m base`;

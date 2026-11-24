@@ -16,9 +16,9 @@
 //    unloads, passing the top of a straight ramp close to the model's time; and what each
 //    gang is doing agrees with its task in the model. Also reported: how often two working
 //    gangs are drawn on top of each other.
-import { runFull, DAY, MONTH, YEAR, T, NT, TASK, HEAVY } from '../src/khufu/sim/index.js';
+import { runFull, DAY, MONTH, YEAR, T, NT, TASK, HEAVY, tagOf } from '../src/khufu/sim/index.js';
 import { seeker } from '../src/khufu/sim/view.js';
-import { COURSES } from '../src/khufu/data.js';
+import { COURSES, halfWidthAt } from '../src/khufu/data.js';
 import { gangTracker, gangTrips, figures, crewSpec, tokenAt, tripHorizon, capBack, ACT, ACT_NAME, SLED, FIG, KN } from '../src/khufu/sim/gangs.js';
 
 let failed = 0;
@@ -111,11 +111,13 @@ for (const [name, t, len] of windows) play(name, t, len);
 play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
 
 // ---- 3. model match ---------------------------------------------------------------------
+const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
 {
   const P = run.sim.P;
   let n = 0, worst = 0, worstAt = '', bad = 0, acts = 0, actBad = 0;
   const headErr = [];
   let close = 0, pairs = 0, moving = 0;
+  const beams = { n: 0, bad: 0, worst: 0 };
   const buf = new Float32Array(SLED + 200 * FIG);
   for (let k = 0; k < 60; k++) {
     const t = (0.3 + k * 0.33) * YEAR + (k % 10) * 3600;
@@ -150,7 +152,20 @@ play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
       const climb = G.t[tb + T.CLIMB], cap = (trip.caps || []).find((cp) => cp.s === trip.caps[0]?.s && cp.t1 === climb);
       const targets = [[climb, rt.foot, 'foot', cap ? capBack(cap, climb) : 0]];
       if (!heavy) targets.push([mid, plan.sectors[G.sector[g]].landing, 'landing', 2.4]);
-      else { const it = plan.heavy[G.sector[g]]; targets.push([mid, [it.x, it.z], 'stone place', 0]); }
+      else {
+        // by the stone's place, or for a roof beam clear of its opening (it.stand); and the beam
+        // lies on its walls, at its place and heading, as the setting ends
+        const it = plan.heavy[G.sector[g]];
+        targets.push([mid, it.stand || [it.x, it.z], it.stand ? 'beam stand' : 'stone place', 0]);
+        const done = G.t[tb + T.DONE];
+        if (trip.place && done - 1 <= t && done - 1 <= tripHorizon(trip)) {
+          figures(trip, done - 1, buf);
+          const pl = trip.place, d = Math.hypot(buf[5] - pl[0], buf[6] - pl[1], buf[7] - pl[2]);
+          const turn = Math.abs(Math.sin(buf[9] - pl[3]));
+          beams.n++; beams.worst = Math.max(beams.worst, d, turn);
+          if (d > 0.02 || turn > 0.02) { beams.bad++; if (beams.bad < 4) console.log(`    gang ${g}: beam ${d.toFixed(3)} m from its place, heading off by ${turn.toFixed(3)}`); }
+        }
+      }
       for (const [tk, p, what, extra] of targets) {
         if (!p || !(tk <= t + 1e-6) || tk > tripHorizon(trip)) continue;
         figures(trip, tk, buf);
@@ -172,6 +187,8 @@ play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
   }
   console.log(`  ${n} event times checked over the build; sled farthest ${worst.toFixed(2)} m from the model's point (${worstAt}; lanes are 1.4 and 3.6 m off the centre line, berths 2.4 m to either side, plus a gang length behind another)`);
   check(n > 100 && bad === 0, 'the sled is at the ramp foot and on the landing at the model\'s times');
+  // (the roof beams are only set in a few courses, so these come from section 4 below as well)
+  roofBeams.n += beams.n; roofBeams.bad += beams.bad; roofBeams.worst = Math.max(roofBeams.worst, beams.worst);
   console.log(`  overlap: ${close} pairs of working gangs with sleds under 1.5 m apart, at 60 moments with ${moving} working gangs in all`);
   headErr.sort((a, b) => a - b);
   const med = headErr[headErr.length >> 1] ?? 0, max = headErr.at(-1) ?? 0;
@@ -179,6 +196,54 @@ play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
   check(headErr.length > 50 && med < 0.05, 'the sled reaches the top of the straight ramp close to the model\'s time');
   check(actBad === 0, `what each gang does agrees with its task in the model (${acts} checked)`);
   void P; void KN;
+}
+
+// ---- 4. the special works: roof beams levered across their openings --------------------
+// For each course that is roofed with beams (Queen's Chamber, Grand Gallery, King's Chamber,
+// the five relieving chambers), find the heavy gangs setting a beam, check that the beam
+// ends on its place across the opening, and play the arrival, the levering and the end of
+// one setting for continuity.
+{
+  const roofCourses = [];
+  let kingRoof = -1;
+  for (let c = 0; c < COURSES.length - 1; c++) {
+    const p = run.sim.plan(c);
+    if (p.heavy.some((h) => h.kind === 'roof')) roofCourses.push(c);
+    if (p.heavy.some((h) => h.kind === 'roof' && h.elem === tagOf('king'))) kingRoof = c;
+    run.sim.ctx.plans.delete(c);
+  }
+  let played = 0;
+  for (const c of roofCourses) {
+    const t0 = S0.courseOpen[c], t1 = S0.courseDone[c];
+    let seen = 0;
+    for (let t = t0; t <= t1 && seen < 3; t += 1800) {
+      const sim = at.seekTo(t), G = sim.state.gang;
+      for (const trip of gangTrips(sim)) {
+        const g = trip.g, tb = g * NT;
+        if (!trip.place || G.course[g] !== c) continue;
+        const un = G.t[tb + T.UNLOAD], done = G.t[tb + T.DONE];
+        // (the times of a trip still on its way out are those of the gang's previous trip)
+        if (!(G.t[tb + T.FOOT] <= t && un <= t && done - 1 <= tripHorizon(trip))) continue;
+        const buf = new Float32Array(size(trip));
+        figures(trip, done - 1, buf);
+        const pl = trip.place, d = Math.hypot(buf[5] - pl[0], buf[6] - pl[1], buf[7] - pl[2]), turn = Math.abs(Math.sin(buf[9] - pl[3]));
+        figures(trip, un, buf);
+        const sledOff = Math.max(Math.abs(buf[0]), Math.abs(buf[2])) <= halfWidthAt(COURSES[c].y0); // the sled stands on the course
+        roofBeams.n++; roofBeams.worst = Math.max(roofBeams.worst, d, turn);
+        if (d > 0.02 || turn > 0.02 || !sledOff) { roofBeams.bad++; console.log(`    course ${c + 1} gang ${g}: beam ${d.toFixed(3)} m from its place, heading off ${turn.toFixed(3)}, sled on the course ${sledOff}`); }
+        seen++;
+        if (!played && c === kingRoof) {
+          played++;
+          play(`King's Chamber beam: arrival (course ${c + 1})`, un - 900, 1200, 5);
+          play(`King's Chamber beam: levered across`, (un + done) / 2 - 300, 600, 5);
+          play(`King's Chamber beam: set, gang turns back`, done - 600, 1200, 5);
+        }
+      }
+    }
+  }
+  console.log(`  roof beams: ${roofCourses.length} courses with beams (${roofCourses.map((c) => c + 1).join(', ')}); ${roofBeams.n} beam settings checked, worst ${roofBeams.worst.toFixed(4)} m / heading`);
+  check(roofBeams.n >= 20 && roofBeams.bad === 0, 'every roof beam checked ends on its place across its opening, from a sled standing on the course');
+  check(played > 0, 'a King\'s Chamber beam setting was played for continuity');
 }
 
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');

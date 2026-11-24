@@ -4,8 +4,9 @@
 import { COURSES, HEIGHT } from '../data.js';
 import { DAY, MONTH } from './params.js';
 import { seek } from './index.js';
-import { ELEM } from './planner.js';
+import { ELEM, HV } from './planner.js';
 import { GIZA, TURA, HEAVY, LAST } from './model.js';
+import { worksSchedule } from './works.js';
 
 // Live state of a queue resource at time t (see resource.js): `pend` holds the service start
 // times of users not yet served, `nf` when each server comes free.
@@ -105,11 +106,16 @@ export function courseLayout(sim, ci) {
   off[2 * k] = n;
   const cells = new Int32Array(n);
   p.sectors.forEach((s, i) => { cells.set(s.giza, off[2 * i]); cells.set(s.tura, off[2 * i + 1]); });
-  const type = new Uint8Array(n);
-  for (let j = 0; j < n; j++) type[j] = p.type[cells[j]];
-  const heavy = new Float32Array(p.heavy.length * 3);
-  p.heavy.forEach((h, j) => { heavy[3 * j] = h.x; heavy[3 * j + 1] = h.z; heavy[3 * j + 2] = h.granite ? 1 : 0; });
-  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, heavy };
+  const type = new Uint8Array(n), elem = new Uint8Array(n);
+  for (let j = 0; j < n; j++) { type[j] = p.type[cells[j]]; elem[j] = p.elem[cells[j]]; }
+  // heavy items, HV numbers each: x, z, granite (0/1), length along its axis (a roof beam's
+  // span plus its bearings; else a cell), axis (0 x, 1 z), element tag, roof beam (0/1)
+  const heavy = new Float32Array(p.heavy.length * HV);
+  p.heavy.forEach((h, j) => {
+    const roof = h.kind === 'roof';
+    heavy.set([h.x, h.z, h.granite ? 1 : 0, roof ? h.span + 1 : p.cell, h.axis === 'x' ? 0 : 1, h.elem, roof ? 1 : 0], HV * j);
+  });
+  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, elem, heavy };
 }
 
 // Milestones for the timeline, from the finished run: room completions (S.elemDone), course
@@ -129,6 +135,9 @@ export function milestones(run) {
   add(E('queen-shafts'), "Queen's Chamber shafts complete", 'room');
   add(E('relieving'), 'Relieving chambers complete', 'room');
   add(E('king-shafts'), "King's Chamber shafts complete", 'room');
+  // the special works scheduled on top of the model (works.js)
+  const W = worksSchedule(worksInput(run));
+  for (const w of W.order) if (/^(subterranean-stop|plugs-stored|relieving-[1-4]|plugged)$/.test(w.id)) add(w.t, w.label, 'room');
   // half the stone, from the per-day history
   const by = run.sim.hist.blocksByDay, half = S.blocksSet / 2;
   for (let d = 0, sum = 0; d < by.length; d++) { sum += by[d]; if (sum >= half) { add((d + 1) * DAY, 'Half the stone set', 'course'); break; } }
@@ -137,6 +146,8 @@ export function milestones(run) {
   add(E('pyramidion'), 'Capstone set', 'capstone');
   return out.sort((a, b) => a.t - b.t);
 }
+
+const worksInput = (run) => { const S = run.sim.state; return { courseOpen: S.courseOpen, courseDone: S.courseDone, elemDone: S.elemDone, elem: ELEM, endT: S.t }; };
 
 // The summary posted once the whole build has run.
 export function runSummary(run) {
@@ -148,5 +159,6 @@ export function runSummary(run) {
     elem: ELEM, elemTotal: Array.from(run.sim.ctx.elemTotal),
     milestones: milestones(run), snapshots: run.snapshots.length,
     switchCi: run.sim.ctx.theory.switchCi, rampName: run.sim.ctx.theory.name,
+    works: worksSchedule(worksInput(run)),
   };
 }

@@ -90,11 +90,15 @@ function buildCourses(holes) {
 }
 
 // Top surface of a course at height y, with every room and passage it cuts through left open.
-export function capGeometry(y) {
+// With yBed (the bed of that course), also every room that reaches up into the course: a
+// chamber whose top lies just under the next course stays open from above until its roof
+// beams are set (the King's Chamber, the relieving chambers).
+export function capGeometry(y, yBed = y) {
   const hw = halfWidthAt(y);
   const rects = [];
   for (const el of ELEMENTS) for (const v of el.voids) {
-    const s = sectionAt(v, y);
+    let s = null;
+    for (const yy of [y, (y + yBed) / 2, yBed + 0.01]) { const q = sectionAt(v, yy); if (q && (!s || (q.x1 - q.x0) * (q.z1 - q.z0) > (s.x1 - s.x0) * (s.z1 - s.z0))) s = q; }
     if (!s) continue;
     const r = { x0: Math.max(-hw, s.x0), x1: Math.min(hw, s.x1), z0: Math.max(-hw, s.z0), z1: Math.min(hw, s.z1) };
     if (r.x1 > r.x0 && r.z1 > r.z0) rects.push(r);
@@ -225,7 +229,7 @@ export class Monument {
     this.built = n; this.capstone = capstone;
     if (!changed) return this.topY();
     this.courses.geometry.setDrawRange(0, n > 0 ? this.ends[n - 1] : 0);
-    if (n > 0 && !this.complete) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1); }
+    if (n > 0 && !this.complete) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1, COURSES[n - 1].y0); }
     this.updateVisibility();
     return this.topY();
   }
