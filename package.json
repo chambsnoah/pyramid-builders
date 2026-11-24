@@ -9,7 +9,8 @@
     "khufu:sim": "node scripts/khufu-sim.mjs",
     "khufu:check": "node scripts/khufu-sim-check.mjs",
     "khufu:seek": "node scripts/khufu-seek.mjs",
-    "khufu:gangs": "node scripts/khufu-gangs.mjs"
+    "khufu:gangs": "node scripts/khufu-gangs.mjs",
+    "khufu:works": "node scripts/khufu-works.mjs"
   },
   "dependencies": {
     "three": "0.170.0"

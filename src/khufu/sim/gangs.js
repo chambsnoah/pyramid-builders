@@ -278,7 +278,7 @@ function planner(sim) {
 // gate) along the road, up the ramp and across the course to `end` ([x, z]). Returns the
 // polyline and the arc lengths of the ramp foot, the top of the straight ramp, the head
 // (where the ramp meets the course) and the end, plus the switchbacks passed on the zigzag.
-function wayOut(sim, R, plan, c, route, src, y, end) {
+function wayOut(sim, R, plan, c, route, src, y, end, via = null) {
   const B = new Builder(R);
   const road = src === 'q' ? plan.road.qPath[route] : plan.road.hPath[route];
   if (y) B.start(y.slot[0], y.slot[1]).to(y.app[0], y.app[1]).to(road[0][0], road[0][1]);
@@ -302,6 +302,7 @@ function wayOut(sim, R, plan, c, route, src, y, end) {
     B.to(rt.head[0], rt.head[1]);
     iSwitch = iHead = B.n - 1;
   }
+  if (via) B.to(via[0], via[1], bed);
   B.to(end[0], end[1], bed);
   const line = new Line(B.done());
   const S = (i) => line.cum[i];
@@ -323,7 +324,7 @@ function loadOf(plan, kind, sector) {
   if (kind !== HEAVY) return [plan.cell * 0.96, plan.h * 0.97, plan.cell * 0.96, kind === TURA ? 1 : 0];
   const it = plan.heavy[sector];
   if (it.kind === 'capstone') return [Math.min(2.6, it.span), plan.h, Math.min(2.6, it.span), 3];
-  if (it.kind === 'roof') return [plan.cell * 0.96, plan.h * 0.97, it.span, it.granite ? 2 : 0];
+  if (it.kind === 'roof') return [plan.cell * 0.96, plan.h * 0.97, it.span + 1, it.granite ? 2 : 0]; // 0.5 m bearing on each wall
   return [plan.cell * 0.96, plan.h * 0.97, plan.cell * 0.96, 2];
 }
 
@@ -417,14 +418,15 @@ function tripOf(sim, R, plans, g, Q) {
   const c = G.course[g], route = G.route[g], sector = G.sector[g];
   const plan = plans(c);
   const heavy = kind === HEAVY, item = heavy ? plan.heavy[sector] : null;
-  const end = heavy ? [item.x, item.z] : plan.sectors[sector].landing;
+  // heavy gangs stop on the stone's place, or for a roof beam clear of the opening it spans
+  const end = heavy ? item.stand || [item.x, item.z] : plan.sectors[sector].landing, via = heavy ? item.via || null : null;
   const climbKnown = tt(T.FOOT) <= now;
 
   // paths: 0 idle, 1 way out, 2 way back (reverse of 1, or of a way out from the harbour for
   // heavy gangs that loaded limestone at the quarry), 3 walk from the quay to the quarry
   const limestoneHeavy = heavy && !item.granite;
-  const out = wayOut(sim, R, plan, c, route, kind === GIZA || limestoneHeavy ? 'q' : 'h', limestoneHeavy ? null : y, end);
-  const back = limestoneHeavy ? wayOut(sim, R, plan, c, route, 'h', y, end) : out;
+  const out = wayOut(sim, R, plan, c, route, kind === GIZA || limestoneHeavy ? 'q' : 'h', limestoneHeavy ? null : y, end, via);
+  const back = limestoneHeavy ? wayOut(sim, R, plan, c, route, 'h', y, end, via) : out;
   const paths = [idle, out.line.p, limestoneHeavy ? reverse(back.line.p) : 1];
   const Lo = out.L, Lb = back.L;
 
@@ -542,7 +544,10 @@ function tripOf(sim, R, plans, g, Q) {
   const berth = climbKnown && !heavy && berthLen >= 6 ? [BERTH[G.berth[g]], berthLen] : null;
   const sig = [task, G.trips[g], c, route, sector, R.key, climbKnown ? `${G.lane[g]}${G.berth[g]}` : '-', tt(T.START), tt(T.FOOT), climbKnown ? tt(T.TOP) : 0,
     task === TASK.RETURNING ? tt(T.HOME) : 0, ...caps.map((cp) => cp.h.join(','))].join('|');
-  return { ...base, sig, paths, knots: Float64Array.from(K), load: loadOf(plan, kind, sector), course: c, narrow, rampLane, caps, berth };
+  const load = loadOf(plan, kind, sector);
+  // a roof beam's resting place on its two walls: centre and heading (see figures())
+  const place = heavy && item.kind === 'roof' ? [item.x, COURSES[c].y0 + load[1] / 2, item.z, item.axis === 'x' ? Math.PI / 2 : 0] : null;
+  return { ...base, sig, paths, knots: Float64Array.from(K), load, course: c, narrow, rampLane, caps, berth, place };
 }
 
 function reverse(p) {
@@ -677,7 +682,7 @@ function placeOn(trip, lines, li, s, lat, out, o) {
 }
 
 // Layout of the output of figures(): the sled, then FIG numbers per crew member.
-export const SLED = 9; // x, y, z, yaw, pitch, stone x, y, z, stone shown (0/1)
+export const SLED = 10; // x, y, z, yaw, pitch, stone x, y, z, stone shown (0/1), stone yaw
 export const FIG = 7; // x, y, z, yaw, pose, distance walked (for the leg cycle), speed (m/s)
 
 // Static placement of the whole gang standing on path `li` at arc length s (no motion):
@@ -770,5 +775,19 @@ export function figures(trip, t, out, o = 0) {
   out[o + 6] = out[o + 1] + (L ? L[1] / 2 : 0) + deck * (1 + lift);
   out[o + 7] = out[o + 2] + cz * ahead - sx * side;
   out[o + 8] = shown;
+  out[o + 9] = yaw;
+  // A roof beam of the special works (King's Chamber, relieving chambers, Queen's Chamber,
+  // Grand Gallery) is not lowered where the sled stands: the gang stops clear of the opening
+  // with the beam pointing across it, and the levermen work it forward off the deck, along
+  // its own axis, until it lies on both walls; then it is eased down onto its bearings. The
+  // beam keeps its heading while the crew turn round for the walk back.
+  if (L && trip.place && tok.act === ACT.SET && tok.blend) {
+    const pl = trip.place, h = smooth(tok.a / 0.8), v = smooth((tok.a - 0.75) / 0.25);
+    const x0 = A[0], y0 = A[1] + L[1] / 2 + deck, z0 = A[2]; // on the deck as the gang arrived
+    out[o + 5] = x0 + (pl[0] - x0) * h;
+    out[o + 6] = y0 + (pl[1] - y0) * v;
+    out[o + 7] = z0 + (pl[2] - z0) * h;
+    out[o + 9] = A[3];
+  }
   return tok;
 }

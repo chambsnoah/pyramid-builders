@@ -214,7 +214,7 @@ export const ELEMENTS = [
   },
   {
     id: 'ascending', name: 'Ascending passage', material: 'limestone', joint: { w: 1.6, h: 0.6, mode: 'slope' },
-    note: 'Left open through the courses as they rose; plugged with granite after the burial (plugs not modelled)',
+    note: 'Left open through the courses as they rose; three granite plugs stored in the Grand Gallery are slid down it at the end (not drawn while walking)',
     voids: [slope(px0, px1, ASC_OPEN_Z - OVERLAP, GALLERY_Z0 + OVERLAP, GALLERY_Z0, QC_PASSAGE_Y, ASC_DEG, PH)],
     label: [AXIS_X, 14, -58],
   },

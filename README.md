@@ -64,6 +64,7 @@ npm run khufu:sim -- --seed 7 --set haul.gangs=80  # other seeds and settings
 npm run khufu:check                                # determinism, snapshot replay and calibration checks
 npm run khufu:seek                                 # seek times and exactness, as the timeline seeks
 npm run khufu:gangs                                # gang placement: continuity, queues, model match
+npm run khufu:works                                # the special works: order, tunnelling, plugs
 ```
 
 - **Discrete events, not ticks.** Quarry faces cut blocks; sled gangs haul them along a road graph to a ramp; ramp lanes, loading bays, landings and harbour berths are first-come-first-served resources with queues; setting crews lay them. Boats bring the Tura casing, yearly convoys the Aswan granite, and heavy gangs take the granite and the roof beams up a whole ramp width at a time.
@@ -94,6 +95,30 @@ npm run khufu:gangs   # continuity (nobody moves faster than a run between 1 s s
 
 With the bubble full (74 gangs, 1,480 articulated workers), a frame takes 11 ms (p95 16 ms), 3.2 ms of it placing the gangs. That is at 2048×1536 on an Apple M3, measured with the GPU synced (`__khufu.benchFrames()`).
 
+### The special works
+
+Each room is built in its own order, and can be watched while it is built (`src/khufu/sim/works.js`, `src/khufu/works.js`):
+
+- **The rooms rise with their stones.** In the course being laid, each room's walls are cut at the share of its stones in that course already set. So the Queen's Chamber, the Grand Gallery's seven corbelled courses, the antechamber, the King's Chamber, the relieving chambers and both pairs of shafts rise stone by stone, not a course at a time.
+- **Roof beams are levered across their openings.** A heavy gang brings each beam in along its own axis and stops with the sled clear of the opening. Its levermen then work the beam forward off the deck until it lies on both walls, and ease it onto its bearings. The beam is the span plus 0.5 m of bearing at each end.
+  - The King's Chamber gets its granite beams this way, and so do the five relieving chambers above it (the top one with its gable), the Queen's Chamber and the Grand Gallery's roof.
+  - A chamber stays open from above until its beams are on.
+- **The tunnel into the bedrock.** From the first day, a crew cuts the descending passage down from where it enters the rock, then the horizontal passage, the subterranean chamber and the blind passage south of it.
+  - In X-ray or walking you see the rock face, diggers crouched at it and spoil carriers going up and down the cut, each bent as low as the roof over him makes him (double in the 0.91 m horizontal passage and the 0.75 m blind passage).
+  - The work stops, with the chamber unfinished as it is at Giza, on the day the course where the ascending passage begins is opened (day 521).
+  - That gives about 0.24 m of passage and 2.7 m³ of chamber a working day.
+- **The granite plugs.** Three plugs are lowered into the foot of the Grand Gallery once its lower walls stand around them (day 2,697), before it is roofed over them. They rest on the floor of its central channel.
+  - At the end of the build they are slid down into the ascending passage, the lowest first, until they fill its lower end. At Giza this happened after the burial, which is later than the timeline goes.
+  - The plugs are not drawn while walking, so the ascending passage can still be walked.
+- **Milestones** mark the subterranean chamber left unfinished, the plugs lowered in, relieving chambers 1–4 roofed and the passage plugged, as well as the rooms already marked.
+- **The event model is unchanged** (hash `299106cca053f39f`). The rooms in the masonry were already built by it: their linings and beams are stones of the courses they pass through. The tunnel and the plugs are a schedule worked out from the finished run, and what is added for drawing (where a beam's gang stands and its place) stays out of the model's state.
+
+```bash
+npm run khufu:works   # room order, tunnelling rate, plugs in place, tunnellers in the cut, continuity
+```
+
+`npm run khufu:gangs` also checks every roof beam it finds being set: it ends exactly on its place across its opening, and the sled stands on the course. A King's Chamber beam is played through its arrival, its levering and the gang turning back.
+
 ## Code map
 
 | File | What it does |
@@ -113,17 +138,19 @@ With the bubble full (74 gangs, 1,480 articulated workers), a frame takes 11 ms 
 | `src/main.js` | Renderer, HUD, timeline, inspect, tour recorder |
 | `src/khufu/data.js` | Khufu: dimensions, course heights, rooms as volumes, sources |
 | `src/khufu/monument.js` | Khufu: casing surfaces per course, cap, pyramidion, far hull |
-| `src/khufu/rooms.js` | Khufu: room and passage linings cut from the volumes |
+| `src/khufu/rooms.js` | Khufu: room and passage linings cut from the volumes, each room cut at the height it has reached and the tunnel at its face |
 | `src/khufu/collision.js`, `walker.js` | Khufu: sparse column collision and first-person walking |
 | `src/khufu/main.js` | Khufu: scene, X-ray, HUD, wiring of the timeline to the renderer, frame-rate and seek measurement |
 | `src/khufu/timeline.js` | Khufu: the worker client (one seek in flight), timeline controls, milestones, historical clock |
 | `src/khufu/statsPanel.js` | Khufu: statistics panel and blocks-per-day chart |
-| `src/khufu/working.js` | Khufu: the course being laid, one instanced block per stone set |
+| `src/khufu/working.js` | Khufu: the course being laid, one instanced block per stone set (roof beams as beams), and how far each room has risen in it |
 | `src/khufu/sim/` | Khufu: 20-year event model (queue, resources, roads, planner, ramp theories, model) |
 | `src/khufu/sim/view.js`, `worker.js` | Khufu: what the page reads from the model at a time (panels, course layout, milestones, seeking), and the worker that runs it |
 | `src/khufu/sim/gangs.js` | Khufu: each sled gang's trip (paths, knots, queues) from the model, ramps as drawn, and where every person stands at any time |
 | `src/khufu/bubble.js` | Khufu: the detail bubble: sleds, stones, articulated workers near the camera, simple figures farther out, ramps |
-| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs`, `khufu-gangs.mjs` | Khufu: run the model, check it, time seeks, check the gangs |
+| `src/khufu/sim/works.js` | Khufu: the special works on top of the model: the tunnel to the subterranean chamber, the granite plugs, and the order of every room |
+| `src/khufu/works.js` | Khufu: draws the tunnel's working face, the tunnellers and the plugs at the timeline's time |
+| `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs`, `khufu-gangs.mjs`, `khufu-works.mjs` | Khufu: run the model, check it, time seeks, check the gangs, check the special works |
 
 ## Making the video
 

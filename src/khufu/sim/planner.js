@@ -26,6 +26,8 @@ import { ceilBreaks } from '../geom.js';
 // element tags: index + 1 (0 = plain masonry)
 export const ELEM = ['descending', 'subterranean', 'ascending', 'queen', 'gallery', 'antechamber', 'king', 'relieving', 'queen-shafts', 'king-shafts', 'pyramidion'];
 export const tagOf = (id) => ELEM.indexOf(id) + 1;
+// numbers per heavy item in courseLayout() (sim/view.js), for the page
+export const HV = 7;
 const CFG = {
   descending: { dress: 1.5 }, subterranean: { dress: 1 }, ascending: { dress: 1.5 },
   queen: { dress: 2, heavyRoof: true }, gallery: { dress: 3, heavyRoof: true }, // gallery lining = corbels
@@ -136,7 +138,7 @@ export function classify(ci, side, density) {
       let sx = 0, sz = 0;
       for (const i of rc) { const [x, z] = at(i); sx += x; sz += z; }
       const span = rc.length * cell;
-      heavy.push({ elem: tag, kind: 'roof', x: sx / rc.length, z: sz / rc.length, span, granite,
+      heavy.push({ elem: tag, kind: 'roof', x: sx / rc.length, z: sz / rc.length, span, granite, axis: alongX ? 'z' : 'x',
         mass: (span + 1.0) * cell * c.h * (granite ? density.granite : density.limestone) }); // 0.5 m bearing each end
     }
   }
@@ -179,7 +181,21 @@ export function buildPlan(ci, side, density, sectorM, layout) {
   const p = classify(ci, side, density);
   const heads = layout.routes.map((r) => r.head);
   const nearest = (x, z) => { let b = 0, bd = Infinity; heads.forEach(([hx, hz], i) => { const d = Math.hypot(hx - x, hz - z); if (d < bd - 1e-9) { bd = d; b = i; } }); return b; };
-  for (const h of p.heavy) { h.route = nearest(h.x, h.z); h.top = Math.hypot(heads[h.route][0] - h.x, heads[h.route][1] - h.z); }
+  for (const h of p.heavy) {
+    h.route = nearest(h.x, h.z); h.top = Math.hypot(heads[h.route][0] - h.x, heads[h.route][1] - h.z);
+    if (h.kind === 'roof') {
+      // For drawing only (the model's times use h.top): a beam cannot be dragged over the
+      // opening it spans, so its gang comes in along the beam's axis from the side nearer the
+      // ramp head and stops with the sled clear of the opening (`stand`, reached through
+      // `via`, 10 m farther out on the same line). The beam is then levered forward off the
+      // sled onto its bearings on both walls (see figures() in gangs.js).
+      const [hx, hz] = heads[h.route], ax = h.axis === 'x';
+      const dir = (ax ? hx - h.x : hz - h.z) >= 0 ? 1 : -1;
+      const off = h.span + 0.9, ux = ax ? dir : 0, uz = ax ? 0 : dir;
+      h.stand = [h.x + ux * off, h.z + uz * off];
+      h.via = [h.x + ux * (off + 10), h.z + uz * (off + 10)];
+    }
+  }
   if (!p.n) return { ...p, k: 0, sectors: [] };
   const { n, cell, hw, type } = p;
   // at least 2 × 2 sectors while there is room, so every ramp serves the small top courses
