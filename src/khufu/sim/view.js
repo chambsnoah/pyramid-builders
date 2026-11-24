@@ -7,6 +7,7 @@ import { seek } from './index.js';
 import { ELEM, HV } from './planner.js';
 import { GIZA, TURA, HEAVY, LAST } from './model.js';
 import { worksSchedule } from './works.js';
+import { theoryStats } from './compare.js';
 
 // Live state of a queue resource at time t (see resource.js): `pend` holds the service start
 // times of users not yet served, `nf` when each server comes free.
@@ -14,9 +15,12 @@ export function waitingAt(R, t) { let n = 0; for (const v of R.pend) if (v > t) 
 export function inUseAt(R, t) { let n = 0; for (const v of R.nf) if (v > t) n++; return Math.min(n, R.cap); }
 
 const FACE = ['south', 'east', 'north', 'west'];
+const CORNER = ['south-west', 'south-east', 'north-east', 'north-west'];
 export function laneName(key) {
-  const m = /^(straight|zigzag)(\d+)$/.exec(key);
+  const m = /^(straight|zigzag|spiral|internal)(\d+)$/.exec(key);
   if (!m) return key;
+  if (m[1] === 'internal') return 'Internal ramp';
+  if (m[1] === 'spiral') return `Spiral ramp from the ${CORNER[+m[2]] || `route ${m[2]}`} corner`;
   const face = FACE[+m[2]]; // a theory with more routes than faces just numbers them
   return `${m[1] === 'straight' ? 'Straight' : 'Zigzag'} ramp, ${face ? `${face} face` : `route ${m[2]}`}`;
 }
@@ -44,10 +48,10 @@ const queueRow = (kind, name, R, t) => ({ kind, name, waiting: waitingAt(R, t), 
 export function viewState(sim) {
   const S = sim.state, P = sim.P, t = S.t;
   // gangs by kind (Giza sleds, Tura sleds, heavy) and task (waiting, out, returning)
-  const gangs = [[0, 0, 0], [0, 0, 0], [0, 0, 0]];
+  const gangs = [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]; // waiting, out, returning, off site (a levy gone home)
   for (let g = 0; g < S.gang.kind.length; g++) gangs[S.gang.kind[g]][S.gang.task[g]]++;
-  let facesCutting = 0, facesFull = 0, facesDone = 0;
-  for (let f = 0; f < S.quarry.idle.length; f++) { const s = S.quarry.idle[f]; if (s === 0) facesCutting++; else if (s === 1) facesFull++; else facesDone++; }
+  let facesCutting = 0, facesFull = 0, facesDone = 0, facesAway = 0;
+  for (let f = 0; f < S.quarry.idle.length; f++) { const s = S.quarry.idle[f]; if (s === 0) facesCutting++; else if (s === 1) facesFull++; else if (s === 2) facesDone++; else facesAway++; }
   const boatsLoaded = S.harbour.boatLoad.reduce((a, b) => a + (b > 0), 0);
 
   // queues on ramps, landings, berths and bays, as they stand right now
@@ -85,8 +89,9 @@ export function viewState(sim) {
     topY: built > LAST ? HEIGHT : built > 0 ? COURSES[built - 1].y1 : 0,
     blocksSet: S.blocksSet, events: S.ev,
     workforce: sim.workforce(),
+    rotation: sim.rotation(),
     gangs: { giza: gangs[GIZA], tura: gangs[TURA], heavy: gangs[HEAVY] },
-    quarry: { stock: S.quarry.stock, cap: P.quarry.yardCap, cut: S.quarry.cut, faces: S.quarry.idle.length, facesCutting, facesFull, facesDone },
+    quarry: { stock: S.quarry.stock, cap: P.quarry.yardCap, cut: S.quarry.cut, faces: S.quarry.idle.length, facesCutting, facesFull, facesDone, facesAway },
     harbour: { tura: S.harbour.tura, cap: P.tura.stockCap, shipped: S.harbour.shipped, delivered: S.harbour.delivered, granite: S.harbour.granite, graniteDelivered: S.harbour.graniteDelivered, boats: P.tura.boats, boatsLoaded },
     queues: queues.slice(0, 8), landingWaiting, landings,
     elemSet: Array.from(S.elemSet),
@@ -128,7 +133,7 @@ export function milestones(run) {
   add(E('descending'), 'Descending passage complete', 'room');
   add(E('ascending'), 'Ascending passage complete', 'room');
   add(E('queen'), "Queen's Chamber roofed", 'room');
-  add(S.courseOpen[ctx.theory.switchCi], 'Straight ramps topped out: zigzags begin', 'ramp');
+  if (ctx.theory.switchLabel) add(S.courseOpen[ctx.theory.switchCi], ctx.theory.switchLabel, 'ramp');
   add(E('antechamber'), 'Antechamber complete', 'room');
   add(E('king'), "King's Chamber roofed", 'room');
   add(E('gallery'), 'Grand Gallery complete', 'room');
@@ -158,7 +163,7 @@ export function runSummary(run) {
     courseOpen: S.courseOpen.slice(), courseDone: S.courseDone.slice(), elemDone: S.elemDone.slice(),
     elem: ELEM, elemTotal: Array.from(run.sim.ctx.elemTotal),
     milestones: milestones(run), snapshots: run.snapshots.length,
-    switchCi: run.sim.ctx.theory.switchCi, rampName: run.sim.ctx.theory.name,
+    switchCi: run.sim.ctx.theory.switchCi, rampName: run.sim.ctx.theory.name, theory: theoryStats(run.sim),
     works: worksSchedule(worksInput(run)),
   };
 }

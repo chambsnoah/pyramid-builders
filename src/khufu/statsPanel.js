@@ -1,6 +1,7 @@
 // The statistics panel (Phase 3): numbers read straight from the event model at the time on
 // the timeline (viewState() in sim/view.js), plus blocks per day from the run's history.
-import { DAY, MONTH_DAYS } from './sim/params.js';
+import { DAY, MONTH_DAYS, SEASONS } from './sim/params.js';
+import { THEORY_IDS } from './sim/ramps/index.js';
 import { clock } from './timeline.js';
 
 const fmt = (n) => Math.round(n).toLocaleString('en-US');
@@ -21,19 +22,26 @@ export class StatsPanel {
         <div class="spark"><canvas id="sSpark" width="276" height="54" aria-label="Blocks set per working day, monthly mean, over the whole build"></canvas><div id="sTip"></div></div>
         <h3>Workforce</h3>
         <div class="row"><span id="sWork">–</span></div>
+        <div class="dim sub" id="sRot"></div>
         <table class="gangs"><thead><tr><th></th><th>out</th><th>back</th><th>waiting</th></tr></thead><tbody id="sGangs"></tbody></table>
         <h3>Stocks</h3>
         <div id="sStocks"></div>
         <h3>Longest queues now</h3>
         <table class="queues"><thead><tr><th></th><th title="waiting now">wait</th><th title="servers in use / capacity">use</th><th title="longest queue so far">max</th></tr></thead><tbody id="sQueues"></tbody></table>
+        <h3>Ramp theories</h3>
+        <table class="theories"><thead><tr><th></th><th title="working years of 300 days to the capstone">years</th><th title="blocks set per working day, over the whole build">per day</th><th title="ramp material built (thousand m³)">ramp k m³</th></tr></thead><tbody id="sTheories"></tbody></table>
+        <div class="dim sub" id="sTheoryNote"></div>
+        <button id="sCompare" class="small">Compare all theories</button>
         <div class="foot" id="sSeek"></div>
       </div>`;
     const q = (id) => root.querySelector(`#${id}`);
     this.el = { blocks: q('sBlocks'), blocksBar: q('sBlocksBar'), course: q('sCourse'), today: q('sToday'), mean: q('sMean'), spark: q('sSpark'), tip: q('sTip'),
-      work: q('sWork'), gangs: q('sGangs'), stocks: q('sStocks'), queues: q('sQueues'), seek: q('sSeek'), body: q('statsBody'), toggle: q('statsToggle') };
+      work: q('sWork'), rot: q('sRot'), theories: q('sTheories'), theoryNote: q('sTheoryNote'), compare: q('sCompare'), gangs: q('sGangs'), stocks: q('sStocks'), queues: q('sQueues'), seek: q('sSeek'), body: q('statsBody'), toggle: q('statsToggle') };
     this.el.toggle.onclick = () => this.setOpen(this.el.body.hidden);
     if (matchMedia('(max-width: 640px)').matches) this.setOpen(false);
     this.view = null;
+    this.theories = new Map(); // id → theoryStats (sim/compare.js)
+    this.el.compare.onclick = () => this.compareAll();
     this.onMove = (e) => this.hover(e);
     this.onLeave = () => { this.el.tip.style.display = 'none'; };
     this.el.spark.addEventListener('mousemove', this.onMove);
@@ -55,6 +63,7 @@ export class StatsPanel {
 
   setRun(summary) {
     this.summary = summary;
+    if (summary.theory) { this.current = summary.theory.id; this.theories.set(summary.theory.id, summary.theory); this.drawTheories(); }
     // monthly mean of blocks per working day, for the sparkline
     const by = summary.blocksByDay, n = Math.ceil(by.length / MONTH_DAYS);
     this.monthly = new Float32Array(n);
@@ -100,6 +109,36 @@ export class StatsPanel {
     tip.style.left = `${Math.min(r.width - 150, Math.max(0, e.clientX - r.left - 75))}px`;
   }
 
+  // ---- the ramp theories ----------------------------------------------------------------
+  // the loaded theory comes with the run; the others are run on demand, each in a spare
+  // worker of its own (about 2.5 s each, in parallel)
+  compareAll() {
+    const E = this.el;
+    E.compare.disabled = true;
+    const todo = THEORY_IDS.filter((id) => !this.theories.has(id));
+    if (!todo.length) { E.compare.disabled = false; return; }
+    E.theoryNote.textContent = `Running ${todo.length} more full builds…`;
+    let left = todo.length;
+    for (const id of todo) {
+      const w = new Worker(new URL('./sim/worker.js', import.meta.url), { type: 'module' });
+      const done = () => { w.terminate(); if (--left === 0) { E.compare.disabled = false; E.theoryNote.textContent = ''; } this.drawTheories(); };
+      w.onmessage = (e) => { if (e.data.type === 'compared') this.theories.set(id, e.data.stats); else if (e.data.type === 'error') console.error('[khufu] compare:', e.data.message); done(); };
+      w.onerror = (e) => { console.error('[khufu] compare worker:', e.message); done(); };
+      w.postMessage({ type: 'compare', id, overrides: {} });
+    }
+  }
+  drawTheories() {
+    const E = this.el, url = (id) => { const u = new URL(location.href); u.searchParams.set('ramp', id); return u.pathname + u.search; };
+    E.theories.innerHTML = THEORY_IDS.map((id) => {
+      const s = this.theories.get(id), cur = id === this.current;
+      const name = cur ? `<b>${s ? s.short : id}</b>` : `<a href="${url(id)}" title="Load this theory">${s ? s.short : id}</a>`;
+      if (!s) return `<tr class="dim"><th>${name}</th><td>–</td><td>–</td><td>–</td></tr>`;
+      const tip = `${s.name}: ${s.years.toFixed(2)} years, ${s.perHour.toFixed(1)} blocks an hour; the top half of the height takes ${s.upperHalfYears.toFixed(1)} years; the ramps can take ${Math.round(s.topCap)} sleds an hour near the top; busiest: ${s.busiest.name}, ${(s.busiest.meanWait / 60).toFixed(1)} min mean wait`;
+      return `<tr class="${cur ? 'hot' : ''}" title="${tip}"><th>${name}</th><td>${s.years.toFixed(1)}</td><td>${fmt(s.perDay)}</td><td>${fmt(s.peakFill / 1000)}</td></tr>`;
+    }).join('');
+    E.compare.hidden = THEORY_IDS.every((id) => this.theories.has(id));
+  }
+
   update(view, t, timing) {
     this.view = view;
     const E = this.el, S = this.summary;
@@ -120,6 +159,8 @@ export class StatsPanel {
 
     const G = view.gangs;
     E.work.textContent = `about ${fmt(view.workforce)} people on site`;
+    const R = view.rotation;
+    if (R) E.rot.textContent = `${SEASONS[R.season]}${R.season === 0 ? ' (the flood)' : ''} · core ${fmt(R.core)} all year · levy ${R.group + 1}: ${fmt(R.levy)} (${R.levyFaces} of ${R.fullFaces} quarry crews, ${R.levyGangs} of ${R.fullGangs} sled gangs${R.handover ? `; ${R.handover} new crews waiting for their sled` : ''})`;
     const row = (name, a, title) => `<tr title="${title}"><th>${name}</th><td>${a[1]}</td><td>${a[2]}</td><td>${a[0]}</td></tr>`;
     E.gangs.innerHTML = row('Quarry sleds', G.giza, 'Sled gangs on the Giza quarry run') + row('Casing sleds', G.tura, 'Sled gangs on the harbour run (Tura casing)') + row('Heavy gangs', G.heavy, 'Big gangs for granite and roof beams');
 

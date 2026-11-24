@@ -43,7 +43,7 @@ for (let y = 0; y * YEAR_DAYS < days; y++) {
 const theory = ctx.theory;
 const milestones = [
   ["Queen's Chamber roofed", S.elemDone[tagOf('queen')]],
-  ['Straight ramps topped out; zigzags begin', S.courseOpen[theory.switchCi]],
+  ...(theory.switchLabel ? [[theory.switchLabel, S.courseOpen[theory.switchCi]]] : []),
   ["King's Chamber roofed", S.elemDone[tagOf('king')]],
   ['Grand Gallery complete', S.elemDone[tagOf('gallery')]],
   ['Relieving chambers complete', S.elemDone[tagOf('relieving')]],
@@ -82,7 +82,7 @@ for (const q of queues) console.log(`    ${q.name.padEnd(42)} ${String(q.maxQueu
 console.log('  longest mean waits');
 for (const q of waits) console.log(`    ${q.name.padEnd(42)} ${(q.meanWait / 60).toFixed(1)} min mean · ${(q.maxWait / 3600).toFixed(1)} h max`);
 console.log(`  granite starvation    ${(S.harbour.starved / DAY).toFixed(1)} working days with heavy gangs idle for want of granite`);
-console.log(`  ramp fill             ${n(report.ramp.fillAtSwitch)} m³ at the switch to zigzags (course ${theory.switchCi}, ${theory.switchY.toFixed(1)} m); ${n(report.ramp.fillAtEnd)} m³ at the end`);
+console.log(theory.switchLabel ? `  ramp fill             ${n(report.ramp.fillAtSwitch)} m³ when the straight ramps stop (course ${theory.switchCi}, ${theory.switchY.toFixed(1)} m); ${n(report.ramp.fillAtEnd)} m³ at the end` : `  ramp fill             ${n(report.ramp.fillAtEnd)} m³ at the end`);
 console.log(`  workforce on site     peak ${n(report.workforce.peak)}, mean ${n(report.workforce.mean)}`);
 console.log(`  snapshots             ${snapshots.length} monthly, mean ${(report.snapshots.meanBytes / 1024).toFixed(1)} KB, ${report.snapshots.totalMB} MB in all`);
 console.log(`  final-state hash      ${report.hash}`);

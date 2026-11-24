@@ -15,7 +15,7 @@ export const DEFAULTS = {
 
   quarry: {
     at: [40, 480], // the main quarry, south of the pyramid (x east, z south)
-    faces: 365, // quarrying crews working at once (the main calibration knob: see README)
+    faces: 440, // quarrying crews at full strength in Akhet (the main calibration knob: see README and `rotation`)
     cutHours: 10, // hours for one crew to free a 1.2 m³ block (scaled by block volume)
     refVolume: 1.2,
     yardCap: 4000, // dressed blocks stacked in the quarry yard before faces stop
@@ -29,7 +29,7 @@ export const DEFAULTS = {
     bays: 6, // sled-loading places on the quay
   },
   haul: { // sled gangs on the Giza quarry run
-    gangs: 100,
+    gangs: 112, // at full strength (see `rotation`)
     crew: 20, // one division: a sled with a ~2.5–4 t block on a wetted track
     vLoaded: 0.55, // m/s on the flat
     vEmpty: 1.1, // walking back with the empty sled
@@ -64,14 +64,39 @@ export const DEFAULTS = {
     leverSpeed: 0.12, // m/s moving a block across the bed from the landing to its place
   },
   landing: { berths: 2 },
-  ramp: {
+  ramp: { // the ramp theory (src/khufu/sim/ramps/): 'straight-zigzag', 'spiral' or 'internal'
     id: 'straight-zigzag',
-    switchY: 45, // straight ramps up to here (just above the King's Chamber floor), zigzags above
+    switchY: 45, // straight ramps up to here (just above the King's Chamber floor), zigzags (or the internal ramp) above
     straight: { grade: 1 / 8, lanes: 2, headway: 75, width: 18 },
     zigzag: { grade: 1 / 6, lanes: 1, headway: 75, turnTime: 180, width: 7, flightFrac: 0.8 },
+    // four ledges, one starting from each corner, winding up round the faces; a sled turns
+    // round the arris at every corner
+    spiral: { grade: 1 / 10, lanes: 1, headway: 75, turnTime: 90, width: 7 },
+    // Houdin's internal ramp: a gallery inside the masonry `inset` m in from the face, at 7 %,
+    // with a notch open to the sky at each corner where the sled is turned with levers
+    internal: { grade: 1 / 14, lanes: 1, headway: 75, turnTime: 150, width: 3, inset: 12, clearance: 3 },
   },
+  // The flood calendar: 12 months of 25 working days, four to a season. Akhet (the flood)
+  // frees the farmers, so the levies are largest then; in Peret (sowing) and Shemu (harvest)
+  // fewer can be spared. High water also shortens the boats' trip from Tura, and the Aswan
+  // convoy comes in on it (granite.convoyDay is in Akhet).
+  seasons: {
+    levy: [1, 0.6, 0.4], // share of the levy on site in Akhet, Peret, Shemu
+    turaTrip: [0.8, 1, 1.25], // Tura round trip, times tura.tripDays
+  },
+  // Workforce rotation: a core of skilled crews works all year (the setting crews, the Tura
+  // and heavy gangs, the boat crews and the first `core` quarry crews and Giza sled gangs).
+  // The rest are levies who serve a month at a time: each month's group leaves as it ends,
+  // and the next arrives `changeoverHours` later, sized by the season. quarry.faces and
+  // haul.gangs are the numbers at full strength (Akhet); `core` is the share kept all year.
+  rotation: { coreFaces: 0.5, coreGangs: 0.64, changeoverHours: 5 },
   workforce: { rampCrew: 2500, supportFactor: 0.35 }, // ramp builders; bakers, brewers, smiths… as a share of the rest
 };
+
+// the flood calendar: season (0 Akhet, 1 Peret, 2 Shemu) and month (0–11) of working time t
+export const SEASONS = ['Akhet', 'Peret', 'Shemu'];
+export const monthOfYear = (t) => Math.floor((t % YEAR) / MONTH);
+export const seasonOf = (t) => Math.floor(monthOfYear(t) / 4);
 
 // deep merge of overrides into the defaults
 export function withDefaults(over = {}, base = DEFAULTS) {

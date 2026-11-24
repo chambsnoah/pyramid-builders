@@ -3,6 +3,9 @@
 //
 //   page → worker  { type: 'init', overrides }          run the whole build once
 //                  { type: 'seek', id, t }               position the model at time t (s)
+//                  { type: 'compare', id, overrides }    run the build once with ramp theory `id`
+//                      and post theoryStats() (sim/compare.js); used by spare workers that
+//                      fill the page's comparison of the ramp theories
 //   worker → page  { type: 'progress', month, t }        while the build runs
 //                  { type: 'ready', summary, ms }        see runSummary() in view.js
 //                  { type: 'state', id, t, ms, view, layout?, gangs }
@@ -11,6 +14,7 @@
 //                      gangs: { n, ramps?, trips } from gangTracker() (gangs.js): the trips
 //                      of the gangs whose trip changed since the previous reply, and the
 //                      ramps as drawn when they changed
+//                  { type: 'compared', stats, ms }
 //                  { type: 'error', message }
 //
 // The page keeps at most one seek in flight and only ever asks for the latest time it
@@ -18,6 +22,7 @@
 import { runFull } from './index.js';
 import { viewState, courseLayout, runSummary, seeker } from './view.js';
 import { gangTracker } from './gangs.js';
+import { compareTheories } from './compare.js';
 
 let run = null, at = null, sentCourse = -2;
 const tracker = gangTracker();
@@ -32,6 +37,11 @@ self.onmessage = (e) => {
       tracker.reset(); sentCourse = -2;
       const summary = runSummary(run);
       self.postMessage({ type: 'ready', summary, ms: performance.now() - t0 }, [summary.blocksByDay.buffer]);
+    } else if (m.type === 'compare') {
+      const t0 = performance.now();
+      const [stats] = compareTheories(m.overrides || {}, [m.id]);
+      delete stats.perYear;
+      self.postMessage({ type: 'compared', stats, ms: performance.now() - t0 });
     } else if (m.type === 'seek') {
       if (!run) return;
       const t0 = performance.now();

@@ -9,7 +9,9 @@
 // Gangs join the bubble nearest first and leave it only beyond NEAR_OUT m, so one walking
 // along the edge does not flicker between the two.
 // It also draws the ramps as the gangs walk on them: the straight ramps against the middle
-// of each face and the zigzag ledge above switchY (rampsForDrawing() in sim/gangs.js).
+// of each face and the zigzag ledge above switchY, or the theory's own paths: the spiral
+// ledges round the faces, or the floor of the internal ramp inside the masonry
+// (rampsForDrawing() in sim/gangs.js).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Crowd } from '../workers.js';
@@ -52,9 +54,9 @@ export class Bubble {
     this.ramps = null; this.rampKey = null; this.visible = true;
     this.info = { gangs: 0, near: 0, workers: 0, far: 0, ms: 0 };
 
-    this.sleds = new THREE.InstancedMesh(sledGeometry(), new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.9 }), 128);
-    this.stones = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.85 }), 128);
-    this.stones.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(128 * 3), 3);
+    this.sleds = new THREE.InstancedMesh(sledGeometry(), new THREE.MeshStandardMaterial({ color: 0x8a6a48, roughness: 0.9 }), 256);
+    this.stones = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), new THREE.MeshStandardMaterial({ roughness: 0.85 }), 256);
+    this.stones.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(256 * 3), 3);
     this.far = new THREE.InstancedMesh(farFigureGeometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), 3000);
     for (const m of [this.sleds, this.stones, this.far]) { m.count = 0; m.frustumCulled = false; scene.add(m); }
     this.sleds.castShadow = this.stones.castShadow = true; this.sleds.receiveShadow = this.stones.receiveShadow = true;
@@ -115,15 +117,16 @@ export class Bubble {
         for (let k = 0; k < 3; k++) quad(s0[k], s1[k], s1[k + 1], s0[k + 1]);
       }
     }
-    // the zigzag: a ledge zw wide along the path, with its outer side built down to the face
-    if (r.zig) r.zig.forEach((p, f) => {
-      const [n] = FACES[f];
+    // the zigzag (or a spiral ledge): a ledge zw wide along the path, with its outer side
+    // built down to the face; the internal ramp: just its floor, a slab inside the masonry
+    const ledge = (p, w, inside) => {
       for (let i = 0; i + 5 < p.length; i += 3) {
         const a = [p[i], p[i + 1], p[i + 2]], b = [p[i + 3], p[i + 4], p[i + 5]];
-        const dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz) || 1;
+        const dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz);
+        if (L < 1e-6) continue;
         let px = -dz / L, pz = dx / L;
-        if (px * n[0] + pz * n[1] < 0) { px = -px; pz = -pz; } // p points away from the pyramid
-        const h = r.zw / 2, drop = r.zw * TAN + 1;
+        if (px * (a[0] + b[0]) + pz * (a[2] + b[2]) < 0) { px = -px; pz = -pz; } // p points away from the pyramid's axis
+        const h = w / 2, drop = inside ? 0.4 : w * TAN + 1;
         const ai = [a[0] - px * h, a[1], a[2] - pz * h], ao = [a[0] + px * h, a[1], a[2] + pz * h];
         const bi = [b[0] - px * h, b[1], b[2] - pz * h], bo = [b[0] + px * h, b[1], b[2] + pz * h];
         const ad = [ao[0], ao[1] - drop, ao[2]], bd = [bo[0], bo[1] - drop, bo[2]];
@@ -134,7 +137,9 @@ export class Bubble {
         tri(ai, ao, ad, [-L2[0], 0, -L2[2]]);
         tri(bi, bo, bd, L2);
       }
-    });
+    };
+    if (r.zig) r.zig.forEach((p) => ledge(p, r.zw, false));
+    if (r.ledges) r.ledges.forEach((p) => ledge(p, r.lw, r.inside));
     if (!pos.length) return;
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -155,7 +160,7 @@ export class Bubble {
     const S = this.sleds, St = this.stones, F = this.far;
     for (let g = 0; g < this.trips.length; g++) {
       const trip = this.trips[g];
-      if (!trip) continue;
+      if (!trip || trip.away) continue; // (a levy gang off site)
       const o = this.bufs[g];
       const tok = figures(trip, t, o);
       this.acts[g] = tok.act;
@@ -266,14 +271,15 @@ export class Bubble {
   }
 
   // where gang g's sled is now (for following it with the camera)
-  sledAt(g, out) { const o = this.bufs[g]; return o ? out.set(o[0], o[1], o[2]) : null; }
+  // (a levy gang off site is not drawn, so it has no place to follow)
+  sledAt(g, out) { const o = this.bufs[g]; return o && !this.trips[g]?.away ? out.set(o[0], o[1], o[2]) : null; }
   // the working gang nearest to p (or any gang if none is working)
   nearestGang(p) {
     let best = -1, bd = Infinity;
     for (let pass = 0; pass < 2 && best < 0; pass++) {
       for (let g = 0; g < this.trips.length; g++) {
         const o = this.bufs[g];
-        if (!o || (pass === 0 && (this.acts[g] === ACT.IDLE || this.acts[g] === undefined))) continue;
+        if (!o || this.trips[g]?.away || (pass === 0 && (this.acts[g] === ACT.IDLE || this.acts[g] === undefined))) continue;
         const d = Math.hypot(o[0] - p.x, o[2] - p.z);
         if (d < bd) { bd = d; best = g; }
       }
