@@ -271,14 +271,15 @@ export class Bubble {
   }
 
   // where gang g's sled is now (for following it with the camera)
-  sledAt(g, out) { const o = this.bufs[g]; return o ? out.set(o[0], o[1], o[2]) : null; }
+  // (a levy gang off site is not drawn, so it has no place to follow)
+  sledAt(g, out) { const o = this.bufs[g]; return o && !this.trips[g]?.away ? out.set(o[0], o[1], o[2]) : null; }
   // the working gang nearest to p (or any gang if none is working)
   nearestGang(p) {
     let best = -1, bd = Infinity;
     for (let pass = 0; pass < 2 && best < 0; pass++) {
       for (let g = 0; g < this.trips.length; g++) {
         const o = this.bufs[g];
-        if (!o || (pass === 0 && (this.acts[g] === ACT.IDLE || this.acts[g] === undefined))) continue;
+        if (!o || this.trips[g]?.away || (pass === 0 && (this.acts[g] === ACT.IDLE || this.acts[g] === undefined))) continue;
         const d = Math.hypot(o[0] - p.x, o[2] - p.z);
         if (d < bd) { bd = d; best = g; }
       }

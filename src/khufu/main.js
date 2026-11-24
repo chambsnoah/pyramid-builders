@@ -413,6 +413,8 @@ function frame() {
   if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
   // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
   if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled, camera); if (tn) { tunnelNow = tn; applyReveal(); } }
+  // a followed levy gang that goes home hands the camera to the working gang nearest the view
+  if (follow >= 0 && !walker.enabled && bubble.trips[follow]?.away) { follow = bubble.nearestGang(orbit.target); if (follow >= 0) bubble.sledAt(follow, followAt); else $('follow').classList.remove('on'); }
   if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);

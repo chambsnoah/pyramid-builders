@@ -22,6 +22,9 @@
 // Workforce rotation: the core quarry crews and sled gangs work all year; the levies serve a
 // month at a time (LEVY_OUT at the start of each month sends the outgoing group home as each
 // of its crews finishes, LEVY_IN brings the next group a few hours later, sized by season).
+// A levy sled gang is a sled and the crew of one group (gang.group): a crew of the arriving
+// group whose sled is still out with the outgoing crew waits at the quarry, and takes the
+// sled over when that crew brings it back and goes home.
 // Casing blocks do the same from the harbour, after boats from Tura unload them.
 // Heavy items (granite lining, roof beams, the capstone) go with heavy gangs that take the
 // whole width of each ramp they climb.
@@ -101,7 +104,7 @@ export function createModel(overrides = {}) {
       quarry: { stock: 0, cut: 0, cutting: 0, idle: new Uint8Array(P.quarry.faces), capIdle: [], wait: [], bays: makeResource('quarry loading bays', P.quarry.bays), waitMax: 0, waitSum: 0, waitN: 0 },
       harbour: { tura: 0, shipped: 0, delivered: 0, granite: 0, graniteShipped: 0, graniteDelivered: 0, starveSince: -1, starved: 0, wait: [],
         berths: makeResource('harbour berths', P.harbour.berths), bays: makeResource('harbour loading bays', P.harbour.bays), boatLoad: new Int32Array(P.tura.boats), waitMax: 0, waitSum: 0, waitN: 0 },
-      gang: { kind: new Uint8Array(G), task: new Uint8Array(G), course: new Int32Array(G).fill(-1), sector: new Int32Array(G).fill(-1), route: new Int8Array(G).fill(-1), trips: new Int32Array(G), t: new Float64Array(G * NT), lane: new Int8Array(G), berth: new Int8Array(G) },
+      gang: { kind: new Uint8Array(G), task: new Uint8Array(G), course: new Int32Array(G).fill(-1), sector: new Int32Array(G).fill(-1), route: new Int8Array(G).fill(-1), trips: new Int32Array(G), t: new Float64Array(G * NT), lane: new Int8Array(G), berth: new Int8Array(G), group: new Int32Array(G) },
       heavyIdle: [],
       lanes: {},
       landing: { served: 0, waitSum: 0, waitMax: 0, maxQ: 0, maxQCourse: -1, maxQT: 0 },
@@ -141,7 +144,7 @@ export function createModel(overrides = {}) {
     L.group++; L.since = S.t;
     L.faces = levyCap('faces', season); L.gangs = levyCap('gangs', season);
     for (let f = 0; f < L.faces; f++) if (q.idle[f] === 3) nextCut(f);
-    for (let g = 0; g < L.gangs; g++) if (G.kind[g] === GIZA && G.task[g] === TASK.AWAY) { G.task[g] = TASK.WAITING; G.t[g * NT + T.WAIT] = S.t; q.wait.push(g); }
+    for (let g = 0; g < L.gangs; g++) if (G.kind[g] === GIZA && G.task[g] === TASK.AWAY) { G.task[g] = TASK.WAITING; G.group[g] = L.group; G.t[g * NT + T.WAIT] = S.t; q.wait.push(g); }
     serveQuarry();
     push(S.Q, (Math.floor(S.t / MONTH) + 1) * MONTH, LEVY_OUT);
   }
@@ -299,7 +302,12 @@ export function createModel(overrides = {}) {
     const G = S.gang;
     G.task[g] = TASK.WAITING; G.course[g] = -1; G.sector[g] = -1;
     G.t[g * NT + T.WAIT] = S.t;
-    if (G.kind[g] === GIZA && g >= S.levy.gangs) { G.task[g] = TASK.AWAY; return; } // its levy has gone home
+    if (G.kind[g] === GIZA && g >= ctx.coreGangs) {
+      // a crew of an earlier group goes home; with no crew of this month's group for the sled
+      // it stays at the quarry, else that crew (waiting since the changeover) takes it over
+      if (g >= S.levy.gangs) { G.task[g] = TASK.AWAY; return; }
+      G.group[g] = S.levy.group;
+    }
     if (G.kind[g] === GIZA) { S.quarry.wait.push(g); serveQuarry(); } else { S.harbour.wait.push(g); serveHarbour(); }
   }
 
@@ -492,14 +500,19 @@ export function createModel(overrides = {}) {
   // ramp builders, and support (bakers, brewers, smiths…) as a share of everyone.
   function rotation() {
     const rt = S.rt[S.cur], sectors = rt ? rt.nSec : 0, G = S.gang, q = S.quarry;
-    let levyGangs = 0, levyFaces = 0;
-    for (let g = ctx.coreGangs; g < P.haul.gangs; g++) if (G.task[g] !== TASK.AWAY) levyGangs++;
+    let levyGangs = 0, levyFaces = 0, handover = 0;
+    for (let g = ctx.coreGangs; g < P.haul.gangs; g++) {
+      if (G.task[g] === TASK.AWAY) continue;
+      levyGangs++;
+      // an outgoing crew still out with the sled, and the arriving crew waiting for it
+      if (G.group[g] !== S.levy.group && g < S.levy.gangs) handover++;
+    }
     for (let f = ctx.coreFaces; f < q.idle.length; f++) if (q.idle[f] !== 3 && q.idle[f] !== 2) levyFaces++;
     const k = 1 + P.workforce.supportFactor;
     const core = (ctx.coreFaces * P.quarry.crew + (ctx.coreGangs + P.tura.gangs) * P.haul.crew + P.heavy.gangs * P.heavy.crew +
       sectors * P.set.crewsPerSector * P.set.crew + P.tura.boats * P.tura.boatCrew + P.workforce.rampCrew) * k;
-    const levy = (levyFaces * P.quarry.crew + levyGangs * P.haul.crew) * k;
-    return { core: Math.round(core), levy: Math.round(levy), group: S.levy.group, since: S.levy.since, season: seasonOf(S.t), levyFaces, levyGangs,
+    const levy = (levyFaces * P.quarry.crew + (levyGangs + handover) * P.haul.crew) * k;
+    return { core: Math.round(core), levy: Math.round(levy), group: S.levy.group, since: S.levy.since, season: seasonOf(S.t), levyFaces, levyGangs, handover,
       coreFaces: ctx.coreFaces, coreGangs: ctx.coreGangs, fullFaces: P.quarry.faces - ctx.coreFaces, fullGangs: P.haul.gangs - ctx.coreGangs };
   }
   function workforce() { const r = rotation(); return r.core + r.levy; }

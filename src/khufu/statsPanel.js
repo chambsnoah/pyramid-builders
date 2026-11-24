@@ -160,7 +160,7 @@ export class StatsPanel {
     const G = view.gangs;
     E.work.textContent = `about ${fmt(view.workforce)} people on site`;
     const R = view.rotation;
-    if (R) E.rot.textContent = `${SEASONS[R.season]}${R.season === 0 ? ' (the flood)' : ''} · core ${fmt(R.core)} all year · levy ${R.group + 1}: ${fmt(R.levy)} (${R.levyFaces} of ${R.fullFaces} quarry crews, ${R.levyGangs} of ${R.fullGangs} sled gangs)`;
+    if (R) E.rot.textContent = `${SEASONS[R.season]}${R.season === 0 ? ' (the flood)' : ''} · core ${fmt(R.core)} all year · levy ${R.group + 1}: ${fmt(R.levy)} (${R.levyFaces} of ${R.fullFaces} quarry crews, ${R.levyGangs} of ${R.fullGangs} sled gangs${R.handover ? `; ${R.handover} new crews waiting for their sled` : ''})`;
     const row = (name, a, title) => `<tr title="${title}"><th>${name}</th><td>${a[1]}</td><td>${a[2]}</td><td>${a[0]}</td></tr>`;
     E.gangs.innerHTML = row('Quarry sleds', G.giza, 'Sled gangs on the Giza quarry run') + row('Casing sleds', G.tura, 'Sled gangs on the harbour run (Tura casing)') + row('Heavy gangs', G.heavy, 'Big gangs for granite and roof beams');
 
