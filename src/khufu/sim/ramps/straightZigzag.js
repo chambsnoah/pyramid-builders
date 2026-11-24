@@ -10,6 +10,14 @@ import { COURSES, HALF, TAN, halfWidthAt } from '../../data.js';
 // face 0 S (+z), 1 E (+x), 2 N (−z), 3 W (−x): outward normal and the direction along the face
 export const FACES = [[[0, 1], [1, 0]], [[1, 0], [0, -1]], [[0, -1], [-1, 0]], [[-1, 0], [0, 1]]];
 
+// straight ramp against a face reaching up to height y: horizontal run, slope length, head
+// and foot distance from the centre, and its fill (a wedge of top width w with 1:2 side
+// slopes, so its section at height h is (w + h)·h, integrated along the run)
+export function straightRamp(S, y) {
+  const run = y / S.grade;
+  return { run, length: Math.hypot(run, y), head: halfWidthAt(y), foot: Math.max(halfWidthAt(y) + run, HALF + 3), fill: run * (S.width * y / 2 + y * y / 3) };
+}
+
 export function createStraightZigzag(p) {
   const S = p.straight, Z = p.zigzag;
   // the course whose bed is nearest switchY: from it upward the zigzags are used
@@ -17,11 +25,7 @@ export function createStraightZigzag(p) {
   for (let i = 0; i < COURSES.length; i++) if (Math.abs(COURSES[i].y0 - p.switchY) < Math.abs(COURSES[switchCi].y0 - p.switchY)) switchCi = i;
   const switchY = COURSES[switchCi].y0;
 
-  // straight ramp reaching up to height y: horizontal run, slope length, foot distance from centre
-  const straight = (y) => {
-    const run = y / S.grade;
-    return { run, length: Math.hypot(run, y), head: halfWidthAt(y), foot: Math.max(halfWidthAt(y) + run, HALF + 3) };
-  };
+  const straight = (y) => straightRamp(S, y);
   // zigzag from switchY up to y: flights no longer than most of the face width at the top
   const zigzag = (y) => {
     const rise = Math.max(0, y - switchY), run = rise / Z.grade;
@@ -63,5 +67,5 @@ export function createStraightZigzag(p) {
     return { total: straightV + zigzagV, parts: { straight: straightV, zigzag: zigzagV } };
   }
 
-  return { id: 'straight-zigzag', name: 'Straight ramps, then zigzags up the faces', switchCi, switchY, layout, fill };
+  return { id: 'straight-zigzag', name: 'Straight ramps, then zigzags up the faces', short: 'Straight + zigzag', switchCi, switchY, switchLabel: 'Straight ramps topped out: zigzags begin', layout, fill };
 }

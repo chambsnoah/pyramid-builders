@@ -1,7 +1,8 @@
 // Checks for the detail bubble (Phase 4 "done when": zooming onto any working ramp shows
 // correct, continuous animation that matches the event model). Uses the same seeker(),
 // gangTracker() and figures() as the worker and the page.
-//   npm run khufu:gangs        exits non-zero if a check fails
+//   npm run khufu:gangs                   exits non-zero if a check fails
+//   npm run khufu:gangs -- --ramp spiral  the same checks for another ramp theory
 //
 // 1. Continuity: plays short windows second by second, as the page does (a seek per step,
 //    keeping each gang's latest trip), and checks that no sled, stone or crew member moves
@@ -24,7 +25,9 @@ import { gangTracker, gangTrips, figures, crewSpec, tokenAt, tripHorizon, capBac
 let failed = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failed++; };
 const t0 = performance.now();
-const run = runFull({ seed: 1 });
+const ri = process.argv.indexOf('--ramp'), rampId = ri > 0 ? process.argv[ri + 1] : null;
+const run = runFull(rampId ? { seed: 1, ramp: { id: rampId } } : { seed: 1 });
+console.log(`ramp theory: ${run.sim.ctx.theory.name}`);
 const end = run.sim.t, S0 = run.sim.state;
 console.log(`full run ${((performance.now() - t0) / 1000).toFixed(2)} s, ends day ${Math.floor(end / DAY)}, hash ${run.sim.hash()}`);
 const at = seeker(run);
@@ -97,6 +100,7 @@ function play(name, from, seconds, dt = 1) {
 const course = (n) => S0.courseDone[n];
 const sw = run.sim.ctx.theory.switchY;
 const zigCourse = Number.isFinite(sw) ? COURSES.findIndex((c) => c.y0 > sw + 5) : -1;
+const above = { 'straight-zigzag': 'the zigzag', spiral: 'the spiral', internal: 'the internal ramp' }[run.sim.ctx.theory.id] || 'the upper ramp';
 const windows = [
   ['early: day 20, 08:00', 19 * DAY + 2 * 3600, 900],
   ['middle: year 10', 10 * YEAR + 4 * 3600, 900],
@@ -104,8 +108,10 @@ const windows = [
   ['across a month boundary (year 4)', 4 * YEAR + 3 * MONTH - 300, 600],
   ['across course 20 complete', course(19) - 300, 600],
   ['across course 120 complete', course(119) - 300, 600],
+  ['a levy group arriving (year 4, month 4)', 4 * YEAR + 3 * MONTH + run.sim.P.rotation.changeoverHours * 3600 - 300, 600],
+  ['high up: course 150', S0.courseOpen[149] + DAY + 3600, 900],
 ];
-if (zigCourse > 0) windows.push([`on the zigzag (course ${zigCourse + 1})`, S0.courseOpen[zigCourse] + 2 * DAY + 3600, 1200]);
+if (zigCourse > 0) windows.push([`on ${above} (course ${zigCourse + 1})`, S0.courseOpen[zigCourse] + 2 * DAY + 3600, 1200]);
 for (const [name, t, len] of windows) play(name, t, len);
 // a coarser pass over a whole working day, as at 1 min/s
 play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
@@ -135,7 +141,7 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
       // what the gang is doing now agrees with the model
       const tok = tokenAt(trip, t);
       acts++;
-      const okAct = task === TASK.WAITING ? tok.act === ACT.IDLE
+      const okAct = task === TASK.WAITING || task === TASK.AWAY ? tok.act === ACT.IDLE
         : task === TASK.RETURNING ? tok.act === ACT.RETURN || (tok.act === ACT.IDLE && t >= G.t[tb + T.HOME] - 1e-6) || tok.act === ACT.UNLOAD || tok.act === ACT.SET
         : tok.act !== ACT.IDLE && tok.act !== ACT.RETURN || t < G.t[tb + T.START] || t >= G.t[tb + T.DONE];
       if (!okAct) { actBad++; if (actBad < 4) console.log(`    gang ${g} task ${task} shows ${ACT_NAME[tok.act]} at day ${(t / DAY).toFixed(2)}`); }
@@ -177,7 +183,7 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
       // the top of a straight ramp: the drawn ramp is not the model's to the metre, so the
       // sled passes the head a little before or after the model's time; how much, as a share
       // of the time from the foot to the landing
-      if (rt.segs.length === 1 && G.t[tb + T.LAND] <= t && G.t[tb + T.LAND] <= tripHorizon(trip)) {
+      if (rt.segs.length === 1 && rt.segs[0].kind === 'straight' && G.t[tb + T.LAND] <= t && G.t[tb + T.LAND] <= tripHorizon(trip)) {
         const a = G.t[tb + T.CLIMB], b = G.t[tb + T.LAND];
         let lo = a, hi = b;
         for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; figures(trip, m, buf); if (Math.max(Math.abs(buf[0]), Math.abs(buf[2])) > Math.max(Math.abs(rt.head[0]), Math.abs(rt.head[1])) + 0.01) lo = m; else hi = m; }
@@ -193,7 +199,7 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
   headErr.sort((a, b) => a - b);
   const med = headErr[headErr.length >> 1] ?? 0, max = headErr.at(-1) ?? 0;
   console.log(`  top of the straight ramp: ${headErr.length} climbs, the sled passes the head ${(med * 100).toFixed(1)} % (median), ${(max * 100).toFixed(1)} % (worst) of the climb off the model's time`);
-  check(headErr.length > 50 && med < 0.05, 'the sled reaches the top of the straight ramp close to the model\'s time');
+  if (run.sim.ctx.theory.switchY > 0) check(headErr.length > 50 && med < 0.05, 'the sled reaches the top of the straight ramp close to the model\'s time');
   check(actBad === 0, `what each gang does agrees with its task in the model (${acts} checked)`);
   void P; void KN;
 }

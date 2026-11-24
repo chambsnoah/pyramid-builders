@@ -18,8 +18,8 @@
 //    stands in exactly the same place: crossing the edge of the bubble changes only how
 //    detailed it looks, never where it is.
 //
-// Geometry. Roads come from the model (plan.road.qPath/hPath). The ramps are drawn here, to
-// match the straight-then-zigzag theory:
+// Geometry. Roads come from the model (plan.road.qPath/hPath). The ramps are drawn here; for
+// the straight-then-zigzag theory:
 //  - The straight ramps are wedges against the middle of each face, raised as the course is
 //    laid (see rampScene). Gangs on them follow that surface, so every gang stands on the
 //    drawn ramp whichever course it is delivering to; one bound for the next course steps up
@@ -27,6 +27,9 @@
 //  - The zigzag on each face is one fixed path from the top of the straight ramp to the apex
 //    (flights across most of the face width at 1:6); a course uses the stretch of it up to
 //    its own bed. Gangs pause at each switchback for the model's turning time.
+// A theory whose ramp is a fixed path (the spiral ledges, the internal ramp) gives that path
+// itself (theory.ledge, see ramps/index.js), and gangs climb it the same way, pausing at its
+// corners.
 // Times between knots come from the model; the drawn paths are only used for shape, so a
 // path a few metres longer or shorter than the model's road just changes the drawn speed.
 // Queues (at the ramp foot, the zigzag entry and each landing berth) are part of a trip too:
@@ -95,7 +98,7 @@ export function rampScene(sim) {
   const built = S.done ? COURSES[LAST].y1 : COURSES[S.cur].y0; // top of the finished courses
   return {
     key: `${look}:${Y.toFixed(2)}:${S.cur}:${S.done ? 1 : 0}`, look, done: S.done, top, sw, Y, hr, F, plat, built, w: R.straight.width,
-    zw, zgrade: R.zigzag.grade, zig: Number.isFinite(sw) && R.zigzag.grade > 0 ? zigCorners(sw, R.zigzag.grade) : null, // (a flat zigzag would never reach the top)
+    zw, zgrade: R.zigzag.grade, zig: !th.ledge && Number.isFinite(sw) && R.zigzag.grade > 0 ? zigCorners(sw, R.zigzag.grade) : null, // (a flat zigzag would never reach the top)
   };
 }
 
@@ -286,17 +289,19 @@ function wayOut(sim, R, plan, c, route, src, y, end, via = null) {
   for (let i = 1; i < road.length; i++) B.to(road[i][0], road[i][1]);
   const iFoot = B.n - 1;
   const rt = plan.layout.routes[route], bed = COURSES[c].y0;
-  const f = rt.face, [n] = FACES[f];
-  const zig = rt.segs.length > 1 && R.zig;
+  const f = rt.face, th = sim.ctx.theory;
+  // a fixed path (the zigzag, or a theory's ledge): reached up the straight ramp (zigzag) or
+  // straight from the foot (spiral, internal ramp)
+  const ledge = rt.segs.some((s) => s.kind !== 'straight') && (th.ledge || (rt.segs.length > 1 && R.zig));
   let iSwitch, iHead, corners = [];
-  if (zig) {
-    const r0 = halfWidthAt(R.sw) + R.zw / 2; // the straight ramp ends where the zigzag ledge starts
-    B.to(n[0] * r0, n[1] * r0);
+  if (ledge) {
+    const zp = th.ledge ? th.ledge(route, bed) : zigPrefix(R, f, bed);
+    B.to(zp.pts[0], zp.pts[2]); // (the zigzag ledge starts where the straight ramp ends)
     iSwitch = B.n - 1;
-    const zp = zigPrefix(R, f, bed);
     const base = B.n - 1;
     B.zig(zp.pts);
-    for (let k = 1; k <= zp.turns; k++) corners.push(base + k);
+    if (zp.cornerIdx) for (const k of zp.cornerIdx) corners.push(base + k);
+    else for (let k = 1; k <= zp.turns; k++) corners.push(base + k); // every zigzag point is a switchback
     iHead = B.n - 1;
   } else {
     B.to(rt.head[0], rt.head[1]);
@@ -371,7 +376,10 @@ function queueIndex(sim, plans) {
 // the cap for gang g in queue list `q` (entries ahead: `ahead(e)`), from t0 to t1, on path li
 // below arc length s; eased in from each entry's arrival when `fromArrival`
 // (each counted in over τ ending at its arrival `at`)
-function capOf(Q, q, g, ahead, li, t0, t1, s) {
+// (lo: never hold the gang farther back than this, where it already is when the queue starts
+// to apply: a queue longer than the stretch before it piles up there rather than reaching
+// back past the gang)
+function capOf(Q, q, g, ahead, li, t0, t1, s, lo = -Infinity) {
   const h = [];
   for (const e of q || []) {
     if (e.h === g || !ahead(e)) continue;
@@ -380,8 +388,10 @@ function capOf(Q, q, g, ahead, li, t0, t1, s) {
     const tau = e.len / QV;
     h.push(e.len, e.at - tau, e.out, tau);
   }
-  return h.length ? { li, t0, t1, s, h } : null;
+  return h.length ? { li, t0, t1, s, h, lo } : null;
 }
+// the farthest along path cap.li the gang may be at time t
+export const capLim = (cap, t) => Math.max(cap.lo ?? -Infinity, cap.s - capBack(cap, t));
 // how far back from cap.s the gang has to stay at time t
 export function capBack(cap, t) {
   const h = cap.h;
@@ -413,7 +423,9 @@ function tripOf(sim, R, plans, g, Q) {
   const base = { g, kind, crew, lane, yard: y };
   if (task === TASK.WAITING || G.course[g] < 0) {
     knot(-1e15, ACT.IDLE, 0, Li, 0, Li);
-    return { ...base, sig: `w${R.done ? 'd' : ''}`, paths: [idle], knots: Float64Array.from(K), load: null };
+    // a levy gang whose month is over is off site (not drawn)
+    const away = task === TASK.AWAY;
+    return { ...base, sig: `${away ? 'a' : 'w'}${R.done ? 'd' : ''}`, paths: [idle], knots: Float64Array.from(K), load: null, away };
   }
   const c = G.course[g], route = G.route[g], sector = G.sector[g];
   const plan = plans(c);
@@ -451,7 +463,7 @@ function tripOf(sim, R, plans, g, Q) {
     1, tt(T.DEPART), climbKnown ? tt(T.CLIMB) : Infinity, out.sFoot);
   if (footCap) caps.push(footCap);
   // where a queue holds the gang at time t (s: where it would be without it)
-  const capAt = (cap, s, t) => (cap ? Math.min(s, cap.s - capBack(cap, t)) : s);
+  const capAt = (cap, s, t) => (cap ? Math.min(s, capLim(cap, t)) : s);
   if (!climbKnown) {
     knot(tt(T.FOOT), ACT.WAIT, 1, out.sFoot, 1, out.sFoot);
   } else {
@@ -492,7 +504,7 @@ function tripOf(sim, R, plans, g, Q) {
       knot(tt(T.ARR1), ACT.WAIT, 1, out.sSwitch, 1, out.sSwitch);
       // the queue for the zigzag (one lane, served in the model's order)
       const ent = tt(T.ENT1);
-      const zcap = capOf(Q, Q.zig.get(rt.segs[1].res), g, (e) => e.serve < ent || (e.serve === ent && e.h < g), 1, tt(T.CLIMB), ent, out.sSwitch);
+      const zcap = capOf(Q, Q.zig.get(rt.segs[1].res), g, (e) => e.serve < ent || (e.serve === ent && e.h < g), 1, tt(T.CLIMB), ent, out.sSwitch, sClimb);
       if (zcap) caps.push(zcap);
       const sZig = capAt(zcap, out.sSwitch, ent);
       // the model's time on the zigzag includes turns × turnTime (twice for heavy gangs);
@@ -502,6 +514,8 @@ function tripOf(sim, R, plans, g, Q) {
       pauseAll = seg.turns * seg.turnTime * (heavy ? 2 : 1);
     } else {
       t0 = tt(T.CLIMB); parts = [[sClimb, out.sFoot, 1], [out.sFoot, out.sHead, vOf(rt.segs[0])], [out.sHead, Lo, 1]];
+      // a spiral or internal ramp: the model's turning time is shared between its corners
+      pauseAll = rt.segs[0].turns * rt.segs[0].turnTime * (heavy ? 2 : 1);
     }
     // Where the model's stretch is shorter than the drawn one (the course-0 ramp has no
     // length in the model, and the zigzag ends at its own corner, not at the model's head),
@@ -517,7 +531,7 @@ function tripOf(sim, R, plans, g, Q) {
     let unload = Math.max(tt(T.UNLOAD), arrive);
     if (!heavy) {
       const un = tt(T.UNLOAD);
-      const lcap = capOf(Q, Q.land.get(`${c}:${sector}:${G.berth[g]}`), g, (e) => e.serve < un || (e.serve === un && e.h < g), 1, t0, Infinity, Lo);
+      const lcap = capOf(Q, Q.land.get(`${c}:${sector}:${G.berth[g]}`), g, (e) => e.serve < un || (e.serve === un && e.h < g), 1, t0, Infinity, Lo, parts[0][0]);
       if (lcap) { unload = Math.min(tt(T.DONE) - 1, Math.max(unload, capEnd(lcap))); lcap.t1 = unload; caps.push(lcap); }
     }
     if (!heavy && unload > arrive) knot(arrive, ACT.WAIT, 1, Lo, 1, Lo);
@@ -590,7 +604,15 @@ export function gangTrips(sim) {
 // the bed of the highest course in use.
 export function rampsForDrawing(sim, R = rampScene(sim)) {
   const zig = R.zig && R.top > R.sw ? FACES.map((_, f) => zigPrefix(R, f, R.top).pts) : null;
-  return { key: R.key, done: R.done, Y: R.Y, hr: R.hr, F: R.F, plat: R.plat, w: R.w, zw: R.zw, sw: R.sw, top: R.top, zig };
+  // a theory's own fixed paths, for every route of the highest course in use that has one
+  const th = sim.ctx.theory;
+  let ledges = null;
+  if (th.ledge && !R.done) {
+    ledges = th.layout(R.look).routes.filter((r) => r.segs.some((s) => s.kind !== 'straight')).map((r) => th.ledge(r.id, R.top).pts);
+    if (!ledges.length) ledges = null;
+  }
+  const lw = th.id === 'internal' ? sim.P.ramp.internal.width : th.id === 'spiral' ? sim.P.ramp.spiral.width : R.zw;
+  return { key: R.key, done: R.done, Y: R.Y, hr: R.hr, F: R.F, plat: R.plat, w: R.w, zw: R.zw, sw: R.sw, top: R.top, zig, ledges, lw, inside: !!th.ledgeInside };
 }
 
 // ---- placing the figures ------------------------------------------------------------------
@@ -633,9 +655,9 @@ export function tokenAt(trip, t, out = {}) {
   // held back in a queue (see capOf)
   if (trip.caps && !out.blend) for (const cap of trip.caps) {
     if (t < cap.t0 || t >= cap.t1 || out.pa !== cap.li) continue;
-    const lim = cap.s - capBack(cap, t);
+    const lim = capLim(cap, t);
     if (out.s > lim) {
-      out.v = Math.max(0, (cap.s - capBack(cap, t + 0.5) - lim) / 0.5);
+      out.v = Math.max(0, (capLim(cap, t + 0.5) - lim) / 0.5);
       out.s = lim;
       out.act = out.v > 0.01 ? ACT.HAUL : ACT.WAIT;
     }

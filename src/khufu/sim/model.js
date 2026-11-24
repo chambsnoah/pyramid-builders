@@ -4,7 +4,8 @@
 // worker.
 //
 // Time is working time in seconds: a working day is DAY (10 h) and a year YEAR_DAYS
-// (300) days. Nights, rest days and the flood calendar are Phase 6.
+// (300) days. Nights and rest days are left out. The flood calendar (Phase 6) sets the
+// season of each working month: it sizes the levies on site and the Tura boats' trip.
 //
 // All mutable state lives in one plain object, `S` (numbers, typed arrays, arrays and plain
 // objects), so a snapshot is a copy of it and restoring one continues exactly the same
@@ -18,6 +19,9 @@
 //   zigzags also turn at each switchback) ─▶ across the course to the sector landing ─▶
 //   landing berth (unload) ─▶ sector stock ─▶ a setting crew sets it farthest-first ─▶
 //   gang walks back.
+// Workforce rotation: the core quarry crews and sled gangs work all year; the levies serve a
+// month at a time (LEVY_OUT at the start of each month sends the outgoing group home as each
+// of its crews finishes, LEVY_IN brings the next group a few hours later, sized by season).
 // Casing blocks do the same from the harbour, after boats from Tura unload them.
 // Heavy items (granite lining, roof beams, the capstone) go with heavy gangs that take the
 // whole width of each ramp they climb.
@@ -28,18 +32,18 @@ import { makeResource, acquire, acquireAll, resourceStats } from './resource.js'
 import { roadNetwork } from './roads.js';
 import { createTheory } from './ramps/index.js';
 import { calibrateCell, summarize, buildPlan, dressOf, ELEM } from './planner.js';
-import { DAY, YEAR, withDefaults } from './params.js';
+import { DAY, YEAR, MONTH, withDefaults, seasonOf } from './params.js';
 
 export const LAST = COURSES.length - 1; // the pyramidion
 export const MASONRY = LAST; // courses 0 … LAST-1
 
 // event types
 const CUT = 1, AT_FOOT = 2, UNLOADED = 3, AT_SOURCE = 4, SET_DONE = 5, BOAT_DEPART = 6, BOAT_ARRIVE = 7, BOAT_UNLOADED = 8,
-  HEAVY_AT_FOOT = 9, HEAVY_SET = 10, HEAVY_HOME = 11, CONVOY = 12, CONVOY_UNLOADED = 13;
+  HEAVY_AT_FOOT = 9, HEAVY_SET = 10, HEAVY_HOME = 11, CONVOY = 12, CONVOY_UNLOADED = 13, LEVY_OUT = 14, LEVY_IN = 15;
 
 // gang kinds and tasks
 export const GIZA = 0, TURA = 1, HEAVY = 2;
-export const TASK = { WAITING: 0, OUT: 1, RETURNING: 2 };
+export const TASK = { WAITING: 0, OUT: 1, RETURNING: 2, AWAY: 3 }; // AWAY: a levy gang off duty
 // per-gang timeline of the current trip (seconds), read by the detail bubble (sim/gangs.js)
 // to place each gang along its route. ARR1 / ENT1: arrival at the top of the first ramp
 // segment and entry onto the second (the zigzag), so the wait between them is known; with a
@@ -61,12 +65,13 @@ export function createModel(overrides = {}) {
     P, side, theory, summary,
     gizaTotal: summary.totals.giza, turaTotal: summary.totals.tura, graniteTotal: summary.totals.granite,
     elemTotal: summary.elemTotal,
+    coreFaces: Math.round(P.quarry.faces * P.rotation.coreFaces), coreGangs: Math.round(P.haul.gangs * P.rotation.coreGangs),
     plans: new Map(),
     hq: roadNetwork([P.harbour.at], [P.quarry.at]).dist[0][0], // harbour ↔ quarry
   };
 
   let S = null;
-  const hist = { blocksByDay: new Uint32Array(40 * 300) }; // blocks set per working day (append-only history)
+  const hist = { blocksByDay: new Uint32Array(80 * 300) }; // blocks set per working day (append-only history)
   const out = { t: 0, type: 0, a: 0, b: 0 };
   const jit = () => jitter(S.rng, P.jitter);
 
@@ -102,16 +107,43 @@ export function createModel(overrides = {}) {
       landing: { served: 0, waitSum: 0, waitMax: 0, maxQ: 0, maxQCourse: -1, maxQT: 0 },
       courseOpen: new Float64Array(LAST + 1).fill(-1), courseDone: new Float64Array(LAST + 1).fill(-1),
       elemSet: new Int32Array(ELEM.length + 1), elemDone: new Float64Array(ELEM.length + 1).fill(-1),
+      // the levy group on site (0 for the first month) and how many quarry crews and Giza sled
+      // gangs may work now (the first `faces` faces, the first `gangs` Giza gangs)
+      levy: { group: 0, faces: levyCap('faces', 0), gangs: levyCap('gangs', 0), since: 0 },
     };
     let g = 0;
-    for (let i = 0; i < P.haul.gangs; i++, g++) { S.gang.kind[g] = GIZA; S.quarry.wait.push(g); }
+    for (let i = 0; i < P.haul.gangs; i++, g++) { S.gang.kind[g] = GIZA; if (g < S.levy.gangs) S.quarry.wait.push(g); else S.gang.task[g] = TASK.AWAY; }
     for (let i = 0; i < P.tura.gangs; i++, g++) { S.gang.kind[g] = TURA; S.harbour.wait.push(g); }
     for (let i = 0; i < P.heavy.gangs; i++, g++) { S.gang.kind[g] = HEAVY; S.heavyIdle.push(g); }
     ensureRt(0); ensureRt(S.look);
     for (let f = 0; f < P.quarry.faces; f++) nextCut(f);
     for (let b = 0; b < P.tura.boats; b++) push(S.Q, (b * P.tura.tripDays * DAY) / P.tura.boats, BOAT_DEPART, b);
     push(S.Q, P.granite.convoyDay * DAY, CONVOY);
+    push(S.Q, MONTH, LEVY_OUT);
     openCourse(0);
+  }
+
+  // ---- the flood calendar and the levies --------------------------------------------------
+  // quarry crews ('faces') or Giza sled gangs ('gangs') allowed on site in season `season`
+  function levyCap(what, season) {
+    const full = what === 'faces' ? P.quarry.faces : P.haul.gangs, core = what === 'faces' ? ctx.coreFaces : ctx.coreGangs;
+    return Math.min(full, core + Math.round((full - core) * P.seasons.levy[season]));
+  }
+  function levyOut() { // the month's levy group goes home: crews finish what they are doing
+    const L = S.levy, q = S.quarry, G = S.gang;
+    L.faces = ctx.coreFaces; L.gangs = ctx.coreGangs;
+    q.wait = q.wait.filter((g) => { const keep = G.kind[g] !== GIZA || g < L.gangs; if (!keep) G.task[g] = TASK.AWAY; return keep; });
+    q.capIdle = q.capIdle.filter((f) => { const keep = f < L.faces; if (!keep) q.idle[f] = 3; return keep; });
+    push(S.Q, S.t + P.rotation.changeoverHours * 3600, LEVY_IN);
+  }
+  function levyIn() { // the next group arrives, as many as the season allows
+    const L = S.levy, q = S.quarry, G = S.gang, season = seasonOf(S.t);
+    L.group++; L.since = S.t;
+    L.faces = levyCap('faces', season); L.gangs = levyCap('gangs', season);
+    for (let f = 0; f < L.faces; f++) if (q.idle[f] === 3) nextCut(f);
+    for (let g = 0; g < L.gangs; g++) if (G.kind[g] === GIZA && G.task[g] === TASK.AWAY) { G.task[g] = TASK.WAITING; G.t[g * NT + T.WAIT] = S.t; q.wait.push(g); }
+    serveQuarry();
+    push(S.Q, (Math.floor(S.t / MONTH) + 1) * MONTH, LEVY_OUT);
   }
 
   // runtime of a course that is open for hauling (the current one and the next)
@@ -168,6 +200,7 @@ export function createModel(overrides = {}) {
   function nextCut(f) {
     const q = S.quarry;
     if (q.cut + q.cutting >= ctx.gizaTotal) { q.idle[f] = 2; return; }
+    if (f >= S.levy.faces) { q.idle[f] = 3; return; } // a levy crew whose month is over
     if (q.stock + q.cutting >= P.quarry.yardCap) { q.idle[f] = 1; q.capIdle.push(f); return; }
     q.idle[f] = 0; q.cutting++;
     const p = plan(Math.min(S.cur, MASONRY - 1));
@@ -266,6 +299,7 @@ export function createModel(overrides = {}) {
     const G = S.gang;
     G.task[g] = TASK.WAITING; G.course[g] = -1; G.sector[g] = -1;
     G.t[g * NT + T.WAIT] = S.t;
+    if (G.kind[g] === GIZA && g >= S.levy.gangs) { G.task[g] = TASK.AWAY; return; } // its levy has gone home
     if (G.kind[g] === GIZA) { S.quarry.wait.push(g); serveQuarry(); } else { S.harbour.wait.push(g); serveHarbour(); }
   }
 
@@ -363,7 +397,7 @@ export function createModel(overrides = {}) {
     if (h.tura >= P.tura.stockCap) { push(S.Q, S.t + DAY, BOAT_DEPART, b); return; }
     const n = Math.min(P.tura.boatLoad, left);
     h.shipped += n; h.boatLoad[b] = n;
-    push(S.Q, S.t + (P.tura.tripDays * DAY * jit()) / 2, BOAT_ARRIVE, b);
+    push(S.Q, S.t + (P.tura.tripDays * P.seasons.turaTrip[seasonOf(S.t)] * DAY * jit()) / 2, BOAT_ARRIVE, b);
   }
   function boatArrive(b) {
     const hold = S.harbour.boatLoad[b] * P.tura.unloadMinPerBlock * 60;
@@ -373,7 +407,7 @@ export function createModel(overrides = {}) {
     const h = S.harbour, n = h.boatLoad[b];
     h.tura += n; h.delivered += n; h.boatLoad[b] = 0;
     serveHarbour();
-    push(S.Q, S.t + (P.tura.tripDays * DAY * jit()) / 2, BOAT_DEPART, b);
+    push(S.Q, S.t + (P.tura.tripDays * P.seasons.turaTrip[seasonOf(S.t)] * DAY * jit()) / 2, BOAT_DEPART, b);
   }
   function convoy() {
     const h = S.harbour, n = Math.min(P.granite.perConvoy, ctx.graniteTotal - h.graniteShipped);
@@ -404,6 +438,8 @@ export function createModel(overrides = {}) {
       case HEAVY_HOME: S.heavyIdle.push(e.a); S.gang.task[e.a] = TASK.WAITING; S.gang.course[e.a] = -1; dispatchHeavy(); break;
       case CONVOY: convoy(); break;
       case CONVOY_UNLOADED: convoyUnloaded(e.a); break;
+      case LEVY_OUT: levyOut(); break;
+      case LEVY_IN: levyIn(); break;
       default: throw new Error(`unknown event ${e.type}`);
     }
   }
@@ -439,7 +475,7 @@ export function createModel(overrides = {}) {
   // FNV-1a over the bytes of everything that records how the build went
   function hash() {
     const nums = [S.t, S.ev, S.blocksSet, S.rng.s, S.cur, S.quarry.cut, S.quarry.stock, S.harbour.delivered, S.harbour.graniteDelivered, S.harbour.starved,
-      S.landing.served, S.landing.waitSum, S.landing.maxQ, S.quarry.waitSum, S.harbour.waitSum];
+      S.landing.served, S.landing.waitSum, S.landing.maxQ, S.quarry.waitSum, S.harbour.waitSum, S.levy.group, S.levy.faces, S.levy.gangs];
     const res = [S.quarry.bays, S.harbour.berths, S.harbour.bays, ...Object.keys(S.lanes).sort().map((k) => S.lanes[k])];
     for (const R of res) nums.push(R.served, R.waitSum, R.maxQ, R.busy);
     const arrays = [new Float64Array(nums), S.courseOpen, S.courseDone, S.elemDone, new Float64Array(S.elemSet), new Float64Array(S.gang.trips)];
@@ -451,13 +487,22 @@ export function createModel(overrides = {}) {
     return (h1 >>> 0).toString(16).padStart(8, '0') + (h2 >>> 0).toString(16).padStart(8, '0');
   }
 
-  // people on site right now (gangs and crews, ramp builders, and support as a share)
-  function workforce() {
-    const rt = S.rt[S.cur], sectors = rt ? rt.nSec : 0;
-    const direct = P.quarry.faces * P.quarry.crew + (P.haul.gangs + P.tura.gangs) * P.haul.crew + P.heavy.gangs * P.heavy.crew +
-      sectors * P.set.crewsPerSector * P.set.crew + P.tura.boats * P.tura.boatCrew + P.workforce.rampCrew;
-    return Math.round(direct * (1 + P.workforce.supportFactor));
+  // Who is on site right now: the core (all year) and the levy group serving this month
+  // (quarry crews and Giza sled gangs, the gangs counted until they are home), with the
+  // ramp builders, and support (bakers, brewers, smiths…) as a share of everyone.
+  function rotation() {
+    const rt = S.rt[S.cur], sectors = rt ? rt.nSec : 0, G = S.gang, q = S.quarry;
+    let levyGangs = 0, levyFaces = 0;
+    for (let g = ctx.coreGangs; g < P.haul.gangs; g++) if (G.task[g] !== TASK.AWAY) levyGangs++;
+    for (let f = ctx.coreFaces; f < q.idle.length; f++) if (q.idle[f] !== 3 && q.idle[f] !== 2) levyFaces++;
+    const k = 1 + P.workforce.supportFactor;
+    const core = (ctx.coreFaces * P.quarry.crew + (ctx.coreGangs + P.tura.gangs) * P.haul.crew + P.heavy.gangs * P.heavy.crew +
+      sectors * P.set.crewsPerSector * P.set.crew + P.tura.boats * P.tura.boatCrew + P.workforce.rampCrew) * k;
+    const levy = (levyFaces * P.quarry.crew + levyGangs * P.haul.crew) * k;
+    return { core: Math.round(core), levy: Math.round(levy), group: S.levy.group, since: S.levy.since, season: seasonOf(S.t), levyFaces, levyGangs,
+      coreFaces: ctx.coreFaces, coreGangs: ctx.coreGangs, fullFaces: P.quarry.faces - ctx.coreFaces, fullGangs: P.haul.gangs - ctx.coreGangs };
   }
+  function workforce() { const r = rotation(); return r.core + r.levy; }
 
   function resources() {
     const L = S.landing;
@@ -477,7 +522,7 @@ export function createModel(overrides = {}) {
     get state() { return S; },
     get done() { return S.done; },
     get t() { return S.t; },
-    runUntil, snapshot, restore, hash, workforce, resources, plan,
+    runUntil, snapshot, restore, hash, workforce, rotation, resources, plan,
     builtCourses: () => (S.done ? LAST + 1 : S.cur), // courses complete (index of the one being laid)
   };
 }

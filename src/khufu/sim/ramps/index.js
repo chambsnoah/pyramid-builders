@@ -19,11 +19,22 @@
 //     fill(ci) -> { total, parts: { … } },   // m³ of ramp standing while course ci is laid
 //   }
 //
-// Phase 2 implements one theory; the others named in issue #1 (spiral, internal) come in
-// Phase 6.
+// Optional, for drawing (sim/gangs.js, bubble.js) and the timeline:
+//   short                       a short name for tables
+//   switchCi, switchY, switchLabel   where the straight ramps stop (a milestone)
+//   ledge(route, y) -> { pts, turns, length, end }   a theory whose ramp is a fixed path
+//                               (not a straight wedge) gives it here, from its foot (or the
+//                               top of the straight ramp) up to height y; the model's segment
+//                               is the same path, so gangs climb exactly what is drawn
+//   ledgeInside                 the path runs inside the masonry (drawn as a floor only)
+//
+// The straight-zigzag theory draws its zigzag itself (gangs.js zigPrefix).
 import { createStraightZigzag } from './straightZigzag.js';
+import { createSpiral } from './spiral.js';
+import { createInternal } from './internal.js';
 
-export const THEORIES = { 'straight-zigzag': createStraightZigzag };
+export const THEORIES = { 'straight-zigzag': createStraightZigzag, spiral: createSpiral, internal: createInternal };
+export const THEORY_IDS = Object.keys(THEORIES);
 export function createTheory(p) {
   const make = THEORIES[p.id];
   if (!make) throw new Error(`unknown ramp theory ${p.id}`);
