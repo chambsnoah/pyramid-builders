@@ -16,6 +16,7 @@ import { SLED, FIG } from './sim/gangs.js';
 import { SpecialWorks } from './works.js';
 import { TUNNEL } from './sim/works.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
+import { THEORY_IDS } from './sim/ramps/index.js';
 import { StatsPanel } from './statsPanel.js';
 import { DAY, YEAR } from './sim/params.js';
 
@@ -284,7 +285,9 @@ const client = new SimClient({
   onRestart: (n) => { timeline.setEnabled(false); timeline.setPlaying(false); timeline.setProgress(`The event model stopped; running it again (attempt ${n + 1})…`); },
   onError: (msg) => { console.error('[khufu] worker:', msg); timeline.setProgress('The event model failed to run (see the console)'); },
 });
-client.init();
+// ?ramp=spiral or ?ramp=internal runs another ramp theory (src/khufu/sim/ramps/)
+const RAMP = params.get('ramp');
+client.init(RAMP && THEORY_IDS.includes(RAMP) ? { ramp: { id: RAMP } } : {});
 
 // which room the walker is in
 function whereIs(p) {

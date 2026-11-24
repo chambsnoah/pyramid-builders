@@ -25,7 +25,7 @@ const day = (t) => `day ${(t / DAY).toFixed(1)}`;
 const run = runFull({ seed: 1 });
 const sum = runSummary(run), W = sum.works, S = run.sim.state;
 console.log(`full run, hash ${sum.hash}, ends ${day(sum.endT)}`);
-check(sum.hash === '299106cca053f39f', `the event model is unchanged by the special works (hash ${sum.hash})`);
+check(sum.hash === '124648f64b35de45', `the event model's hash is the Phase 6 one (seasons and levy rotation; hash ${sum.hash})`);
 
 // ---- when each room's stones are set, from the course plans --------------------------
 // first and last course holding a stone of each element, and of its roof beams

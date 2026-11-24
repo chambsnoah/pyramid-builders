@@ -547,7 +547,10 @@ function tripOf(sim, R, plans, g, Q) {
   // knots must not go back in time (guards rounding in the zigzag split)
   for (let i = KN; i < K.length; i += KN) if (K[i] < K[i - KN]) K[i] = K[i - KN];
   // the zigzag is a single lane: gangs keep to its middle there (path, from s, to s)
-  const narrow = out.sHead > out.sSwitch + 1e-6 ? [[1, out.sSwitch, out.sHead], [2, Lb - back.sHead, Lb - back.sSwitch]] : [];
+  // (a theory's ledge may meet its road or the course at a hairpin, where "left of travel"
+  // swaps sides: the middle is kept for 12 m past each end of it)
+  const ext = sim.ctx.theory.ledge ? 12 : 0;
+  const narrow = out.sHead > out.sSwitch + 1e-6 || (ext && out.sSwitch > out.sFoot - 1e-6) ? [[1, out.sSwitch - ext, out.sHead + ext], [2, Lb - back.sHead - ext, Lb - back.sSwitch + ext]] : [];
   // once the climb is known, the gang moves over to its model lane on the ramp, after the
   // whole gang (its front rank is up to ~12 m ahead of the sled) has passed the foot
   const rampLane = climbKnown && !heavy ? [out.sFoot + 14, LANES[G.lane[g]]] : null;
@@ -555,7 +558,8 @@ function tripOf(sim, R, plans, g, Q) {
   // back) beside the landing point, eased in over the last 30 m
   // (only past the foot, as the berth is known from the foot on, and only with room for it)
   const berthLen = Math.min(30, Lo - (out.sFoot + 14));
-  const berth = climbKnown && !heavy && berthLen >= 6 ? [BERTH[G.berth[g]], berthLen] : null;
+  // (not where a theory's ledge ends close to the landing: the way in may double back there)
+  const berth = climbKnown && !heavy && berthLen >= 6 && !(ext && Lo - out.sHead < berthLen + ext) ? [BERTH[G.berth[g]], berthLen] : null;
   const sig = [task, G.trips[g], c, route, sector, R.key, climbKnown ? `${G.lane[g]}${G.berth[g]}` : '-', tt(T.START), tt(T.FOOT), climbKnown ? tt(T.TOP) : 0,
     task === TASK.RETURNING ? tt(T.HOME) : 0, ...caps.map((cp) => cp.h.join(','))].join('|');
   const load = loadOf(plan, kind, sector);
