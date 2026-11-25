@@ -175,6 +175,7 @@ function setWalk(on, spot) {
     if (inside && !xray) setXray(true);
   }
   $('walk').classList.toggle('on', on);
+  $('zoomIn').disabled = $('zoomOut').disabled = on; // the walker has the camera
   $('hint').style.display = on ? 'block' : 'none';
   $('cross').style.display = on ? 'block' : 'none';
   if (!on) $('climb').style.display = 'none';
@@ -192,6 +193,29 @@ function setFollow(on) {
   $('follow').classList.toggle('on', follow >= 0);
 }
 $('follow').onclick = () => setFollow(follow < 0);
+
+// zoom: the camera moves along its line to what it looks at, by ZOOM a press, eased over
+// ZOOM_MS in the frame loop (presses during a move add to where it is going). Only the
+// distance changes, so Follow keeps working; while walking the walker has the camera.
+const ZOOM = 0.6, ZOOM_MS = 250;
+let zoomTo = null; // { from, to, t0 } distances from orbit.target
+function zoom(k) {
+  if (walker.enabled) return;
+  const now = camera.position.distanceTo(orbit.target);
+  const to = THREE.MathUtils.clamp((zoomTo ? zoomTo.to : now) * k, orbit.minDistance, orbit.maxDistance);
+  zoomTo = { from: now, to, t0: performance.now() };
+}
+function zoomStep() {
+  if (!zoomTo || walker.enabled) { zoomTo = null; return; }
+  const a = Math.min(1, (performance.now() - zoomTo.t0) / ZOOM_MS), e = a * a * (3 - 2 * a);
+  const off = camera.position.clone().sub(orbit.target);
+  if (off.lengthSq() < 1e-12) { zoomTo = null; return; }
+  off.setLength(zoomTo.from + (zoomTo.to - zoomTo.from) * e);
+  camera.position.copy(orbit.target).add(off);
+  if (a >= 1) zoomTo = null;
+}
+$('zoomIn').onclick = () => zoom(ZOOM);
+$('zoomOut').onclick = () => zoom(1 / ZOOM);
 renderer.domElement.addEventListener('click', () => { if (walker.enabled && document.pointerLockElement !== renderer.domElement && !params.has('nolock')) lockPointer(); });
 SPOTS.forEach((s, i) => {
   const b = document.createElement('button');
@@ -208,6 +232,8 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyX') setXray(!xray);
   if (e.code === 'KeyF') setWalk(!walker.enabled);
   if (e.code === 'KeyG' && !walker.enabled) setFollow(follow < 0);
+  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') { zoom(ZOOM); e.preventDefault(); }
+  if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') { zoom(1 / ZOOM); e.preventDefault(); }
   const d = /^Digit(\d)$/.exec(e.code);
   if (d && SPOTS[+d[1] - 1]) setWalk(true, SPOTS[+d[1] - 1]);
 });
@@ -419,6 +445,7 @@ function frame() {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);
   }
+  zoomStep();
   if (walker.enabled) walker.update(dt); else orbit.update();
   const climbShown = walker.enabled && walker.canClimb;
   if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
