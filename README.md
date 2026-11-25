@@ -136,6 +136,32 @@ npm run khufu:works   # room order, tunnelling rate, plugs in place, tunnellers 
 
 `npm run khufu:gangs` also checks every roof beam it finds being set: it ends exactly on its place across its opening, and the sled stands on the course. A King's Chamber beam is played through its arrival, its levering and the gang turning back.
 
+### Tests
+
+Every pull request runs the suite in GitHub Actions (`.github/workflows/test.yml`): one job for the event model, one for the browser.
+
+```bash
+npm test             # all of it: unit tests, model checks, then the browser tests
+npm run test:unit    # unit tests of the event model (node --test, ~1 s)
+npm run test:model   # khufu:check, seek, gangs, works and theories (~1 min)
+npm run test:e2e     # builds, then Playwright in headless Chromium (~6 min)
+npx playwright test rendering --update-snapshots   # refresh the reference pictures
+```
+
+The first browser run needs `npx playwright install chromium`. Playwright serves the build with `vite preview` on port 5182, and WebGL runs on SwiftShader (software), so the pictures are the same on a laptop and on the CI runner.
+
+| Layer | Tests | What they check |
+| --- | --- | --- |
+| Event model | `tests/unit/*.test.mjs`, the `khufu:*` scripts | The queue's order (ties in scheduling order, packing for snapshots), FIFO resources and `acquireAll`, the seeded random numbers, the planner (block count, casing ring, rooms open and lined, King's Chamber beams, every block in one sector, farthest-first), each ramp theory (routes climb to the course, fill grows, the model climbs the drawn path); then determinism, snapshots, seeks, gangs, works and theories |
+| Pages | `tests/e2e/load.spec.mjs` | `index.html` and `khufu.html` (and `?ramp=spiral`, `?ramp=internal`) load and run, with no console error. Every browser test fails on any console error or uncaught exception (`tests/e2e/fixtures.mjs`). |
+| Timeline | `tests/e2e/timeline.spec.mjs` | Scrubbing across the build, back and forth; the statistics panel (blocks, course, workforce, gangs, quarry yard, queues) matches the event model run in Node at the same time; day and month steps, the arrow keys and the milestone marks; play, pause and playing into the end |
+| Tours | `tests/e2e/tours.spec.mjs` | The small pyramid's tour plays every shot (at 4× speed, `window.__tour.speed`). Khufu's tour, default and spiral, driven frame by frame: every stop, the capstone close-up, all seven walk legs, the closing circle, then the controls handed back; Esc and **End tour** stop it |
+| Walking | `tests/e2e/walking.spec.mjs` | From each "Walk to" spot into every room (descending and ascending passages, subterranean, Queen's Chamber, Grand Gallery, antechamber, King's Chamber): the real walker on a waypoint graph (`walk-helpers.mjs`), pressing Space at the climb prompts |
+| Rendering | `tests/e2e/rendering.spec.mjs` | Five fixed views on fixed days against the pictures in `tests/e2e/__screenshots__`; frame-time budgets with the bubble full (`__khufu.benchFrames`; `KHUFU_FRAME_BUDGET_MS`, `KHUFU_PLACE_BUDGET_MS`) |
+| Detail bubble | `tests/e2e/bubble.spec.mjs` | Every sled and worker the page draws is where the model run in Node puts it, inside the bubble and as a simple figure once its gang leaves it; the same after seeking away and back; no jumps while playing at 1× and 4× (`__khufu.checkMotion`) |
+
+To drive frames from a test, set `__khufu.hold = true`: the page's frame loop then stands aside.
+
 ## Code map
 
 | File | What it does |
@@ -170,6 +196,7 @@ npm run khufu:works   # room order, tunnelling rate, plugs in place, tunnellers 
 | `src/khufu/bubble.js` | Khufu: the detail bubble: sleds, stones, articulated workers near the camera, simple figures farther out, ramps |
 | `src/khufu/sim/works.js` | Khufu: the special works on top of the model: the tunnel to the subterranean chamber, the granite plugs, and the order of every room |
 | `src/khufu/works.js` | Khufu: draws the tunnel's working face, the tunnellers and the plugs at the timeline's time |
+| `tests/unit/`, `tests/e2e/`, `playwright.config.mjs` | The test suite: unit tests of the event model, and the browser tests (see Tests) |
 | `scripts/khufu-sim.mjs`, `khufu-sim-check.mjs`, `khufu-seek.mjs`, `khufu-gangs.mjs`, `khufu-works.mjs`, `khufu-theories.mjs` | Khufu: run the model, check it, time seeks, check the gangs (`-- --ramp spiral` for another theory), check the special works, compare the ramp theories |
 
 ## Making the video
