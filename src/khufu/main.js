@@ -294,8 +294,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyX') setXray(!xray);
   if (e.code === 'KeyF') setWalk(!walker.enabled);
   if (e.code === 'KeyG' && !walker.enabled) setFollow(follow < 0);
-  if (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd') { zoom(ZOOM); e.preventDefault(); }
-  if (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract') { zoom(1 / ZOOM); e.preventDefault(); }
+  // (with Ctrl or Cmd these are the browser's own page zoom)
+  const plain = !e.ctrlKey && !e.metaKey;
+  if (plain && (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')) { zoom(ZOOM); e.preventDefault(); }
+  if (plain && (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract')) { zoom(1 / ZOOM); e.preventDefault(); }
   const d = /^Digit(\d)$/.exec(e.code);
   if (d && SPOTS[+d[1] - 1]) setWalk(true, SPOTS[+d[1] - 1]);
 });
