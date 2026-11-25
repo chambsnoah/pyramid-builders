@@ -27,6 +27,7 @@
   #controls button { appearance: none; border: 0; background: rgba(255,255,255,0.08); color: var(--ink); height: 32px; min-width: 34px; padding: 0 10px; border-radius: 8px; cursor: pointer; font: inherit; font-weight: 600; }
   #controls button:hover { background: rgba(255,255,255,0.18); }
   #controls button.on { background: var(--gold); color: #2a1c08; }
+  #controls button:disabled { opacity: 0.4; cursor: default; background: rgba(255,255,255,0.08); }
   #controls .sep { width: 1px; height: 20px; background: var(--edge); margin: 0 3px; }
   #controls label { display: flex; align-items: center; gap: 6px; padding: 0 6px; color: var(--dim); font-size: 12px; }
   #courses { width: 150px; accent-color: var(--gold); }
@@ -137,6 +138,9 @@
   <button id="xray" title="See through the masonry (X)">X-ray</button>
   <button id="walk" title="First-person walking (F)">Walk</button>
   <button id="follow" title="Follow the sled gang nearest the middle of the view (G)">Follow</button>
+  <span class="sep"></span>
+  <button id="zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
+  <button id="zoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
   <button id="tour" title="A guided tour of the build, milestone by milestone (T; Esc ends it)">Tour</button>
 </div>
 <div id="tourCaption" class="glass"><b id="tourTitle"></b><span id="tourSub"></span><button id="tourEnd" title="End the tour (Esc)">End tour</button></div>

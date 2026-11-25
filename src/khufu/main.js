@@ -44,7 +44,9 @@ camera.position.set(310, 150, -380);
 scene.add(camera);
 const orbit = new OrbitControls(camera, renderer.domElement);
 orbit.target.set(0, 42, 0);
-orbit.enableDamping = true; orbit.dampingFactor = 0.08;
+// drags settle a little sooner than three.js's default; the mouse wheel is handled below
+// (wheelZoom), toward the point under the mouse
+orbit.enableDamping = true; orbit.dampingFactor = 0.14;
 orbit.maxPolarAngle = 1.52; orbit.minDistance = 3; orbit.maxDistance = 5000;
 
 // ---- sky, light and the plateau ---------------------------------------------------
@@ -176,6 +178,7 @@ function setWalk(on, spot) {
     if (inside && !xray) setXray(true);
   }
   $('walk').classList.toggle('on', on);
+  $('zoomIn').disabled = $('zoomOut').disabled = on; // the walker has the camera
   $('hint').style.display = on ? 'block' : 'none';
   $('cross').style.display = on ? 'block' : 'none';
   if (!on) $('climb').style.display = 'none';
@@ -193,6 +196,91 @@ function setFollow(on) {
   $('follow').classList.toggle('on', follow >= 0);
 }
 $('follow').onclick = () => setFollow(follow < 0);
+
+// Zoom buttons: the camera moves along its line to what it looks at, by ZOOM a press, eased
+// over ZOOM_MS in the frame loop (presses during a move add to where it is going).
+// Double-click: the view glides over to centre on the point clicked, closing in on it if it
+// is far. Only the target and the distance change, never the angle of view, so Follow keeps
+// working; while walking the walker has the camera.
+const ZOOM = 0.6, ZOOM_MS = 250, FLY_MS = 450;
+let zoomTo = null; // { from, to, t0, ms, a?, b? }: distances from orbit.target; a → b: the target moving
+function zoom(k) {
+  if (walker.enabled) return;
+  const now = camera.position.distanceTo(orbit.target);
+  const to = THREE.MathUtils.clamp((zoomTo ? zoomTo.to : now) * k, orbit.minDistance, orbit.maxDistance);
+  // (pressed during a double-click glide, the glide still ends on the point clicked: stopping
+  // it would leave the pivot partway, on nothing in particular)
+  zoomTo = { from: now, to, t0: performance.now(), ms: ZOOM_MS, a: zoomTo?.b ? orbit.target.clone() : null, b: zoomTo?.b || null };
+}
+function centreOn(p) {
+  if (walker.enabled) return;
+  const now = camera.position.distanceTo(orbit.target);
+  zoomTo = { from: now, to: THREE.MathUtils.clamp(Math.min(now, 160), orbit.minDistance, orbit.maxDistance), t0: performance.now(), ms: FLY_MS, a: orbit.target.clone(), b: p.clone() };
+}
+function zoomStep() {
+  if (!zoomTo || walker.enabled) { zoomTo = null; return; }
+  const z = zoomTo, a = Math.min(1, (performance.now() - z.t0) / z.ms), e = a * a * (3 - 2 * a);
+  const off = camera.position.clone().sub(orbit.target);
+  if (off.lengthSq() < 1e-12) { zoomTo = null; return; }
+  if (z.b) orbit.target.lerpVectors(z.a, z.b, e);
+  off.setLength(z.from + (z.to - z.from) * e);
+  camera.position.copy(orbit.target).add(off);
+  if (a >= 1) zoomTo = null;
+}
+// Mouse wheel: zoom about the point under the mouse. The camera and the pivot both move
+// toward (or away from) that point by the same factor, so the point stays under the mouse,
+// the angle of view is kept, and repeated zooms bring the pivot onto what is looked at.
+// The point is found on the pyramid as built (its four faces and its flat top, a solid
+// worked out directly, so a trackpad's stream of wheel events costs nothing) or else on the
+// ground. three.js's own zoomToCursor guesses it on a plane through the pivot instead, which
+// can leave the pivot buried in the masonry.
+const ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+const WHEEL = 0.0018; // zoom factor per pixel of wheel travel: exp(WHEEL × deltaY)
+function pickSolid(o, d) {
+  // the pyramid up to its built height: x ± (HALF/HEIGHT)·y ≤ HALF (and z), 0 ≤ y ≤ top
+  const top = monument.topY(), s = HALF / HEIGHT;
+  let t0 = 0, t1 = Infinity;
+  const planes = [[1, s, 0, HALF], [-1, s, 0, HALF], [0, s, 1, HALF], [0, s, -1, HALF], [0, 1, 0, top], [0, -1, 0, 0]];
+  for (const [a, b, c, k] of planes) {
+    const num = k - (a * o.x + b * o.y + c * o.z), den = a * d.x + b * d.y + c * d.z;
+    if (Math.abs(den) < 1e-12) { if (num < 0) { t0 = Infinity; break; } continue; }
+    const t = num / den;
+    if (den < 0) t0 = Math.max(t0, t); else t1 = Math.min(t1, t);
+  }
+  if (top > 0 && t0 < t1 && t0 > 0) return o.clone().addScaledVector(d, t0);
+  if (d.y < -1e-6 && o.y > 0) return o.clone().addScaledVector(d, -o.y / d.y); // the plateau
+  return null;
+}
+window.addEventListener('wheel', (e) => {
+  if (e.target !== renderer.domElement || walker.enabled || tour.active) return;
+  e.preventDefault(); e.stopPropagation(); // (OrbitControls keeps pinch zoom on touch screens)
+  const dy = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaMode === 2 ? e.deltaY * 400 : e.deltaY;
+  const dist = camera.position.distanceTo(orbit.target);
+  const k = THREE.MathUtils.clamp(Math.exp(WHEEL * THREE.MathUtils.clamp(dy, -200, 200)), orbit.minDistance / dist, orbit.maxDistance / dist);
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  let H = pickSolid(ray.ray.origin, ray.ray.direction);
+  // the ramps (a few hundred triangles) when they are nearer than the pyramid or the ground
+  const rh = bubble.rampMesh && bubble.rampMesh.visible ? ray.intersectObject(bubble.rampMesh, false)[0] : null;
+  if (rh && (!H || rh.distance < H.distanceTo(ray.ray.origin))) H = rh.point;
+  if (!H) H = orbit.target.clone();
+  zoomTo = null;
+  camera.position.sub(H).multiplyScalar(k).add(H);
+  orbit.target.sub(H).multiplyScalar(k).add(H);
+}, { passive: false, capture: true });
+// what the mouse is over: the masonry, the ramps or the ground (on a double-click)
+renderer.domElement.addEventListener('dblclick', (e) => {
+  if (walker.enabled || tour.active) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  const targets = [monument.group, ...ground, ...(bubble.rampMesh ? [bubble.rampMesh] : [])];
+  const hit = ray.intersectObjects(targets, true).find((h) => h.object.visible);
+  if (hit) { if (follow >= 0) setFollow(false); centreOn(hit.point); }
+});
+$('zoomIn').onclick = () => zoom(ZOOM);
+$('zoomOut').onclick = () => zoom(1 / ZOOM);
 renderer.domElement.addEventListener('click', () => { if (walker.enabled && document.pointerLockElement !== renderer.domElement && !params.has('nolock')) lockPointer(); });
 SPOTS.forEach((s, i) => {
   const b = document.createElement('button');
@@ -212,6 +300,10 @@ window.addEventListener('keydown', (e) => {
   if (e.code === 'KeyX') setXray(!xray);
   if (e.code === 'KeyF') setWalk(!walker.enabled);
   if (e.code === 'KeyG' && !walker.enabled) setFollow(follow < 0);
+  // (with Ctrl or Cmd these are the browser's own page zoom)
+  const plain = !e.ctrlKey && !e.metaKey;
+  if (plain && (e.key === '+' || e.key === '=' || e.code === 'NumpadAdd')) { zoom(ZOOM); e.preventDefault(); }
+  if (plain && (e.key === '-' || e.key === '_' || e.code === 'NumpadSubtract')) { zoom(1 / ZOOM); e.preventDefault(); }
   const d = /^Digit(\d)$/.exec(e.code);
   if (d && SPOTS[+d[1] - 1]) setWalk(true, SPOTS[+d[1] - 1]);
 });
@@ -308,6 +400,7 @@ const tour = new KhufuTour({
 function startTour(opts) {
   if (walker.enabled) setWalk(false);
   if (follow >= 0) setFollow(false);
+  zoomTo = null;
   if (!tour.start(opts)) return;
   orbit.enabled = false;
   document.body.classList.add('touring');
@@ -454,7 +547,12 @@ function frame() {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);
   }
-  if (walker.enabled) walker.update(dt); else if (!tour.active) orbit.update();
+  zoomStep();
+  if (walker.enabled) walker.update(dt); else if (!tour.active) {
+    orbit.update();
+    // zooming toward the mouse can carry the pivot below the plateau; keep it on the ground
+    if (orbit.target.y < 0 && !xray) { camera.position.y -= orbit.target.y; orbit.target.y = 0; }
+  }
   const climbShown = walker.enabled && walker.canClimb;
   if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
   // far detail level: from far away the finished pyramid is a textured hull and the rooms are
