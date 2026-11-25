@@ -9,7 +9,8 @@
 //  - hold: a few more seconds at 1×, the camera following the gang, then on to the next stop.
 // After the finished monument, a walk inside: the camera comes down to the entrance on the
 // north face and becomes the walker, which glides down the descending passage, up the
-// ascending passage and the Grand Gallery, through the antechamber into the King's Chamber.
+// ascending passage and the Grand Gallery, through the antechamber into the King's Chamber;
+// then cuts to a look round the Queen's Chamber and the subterranean chamber.
 // Then out again, X-ray off, for one slow circle round the finished pyramid.
 // No DOM here: main.js gives it the timeline, the worker client, the bubble, the camera and
 // a few switches, and draws the captions it returns.
@@ -74,7 +75,8 @@ export function walkLegs() {
   const D = el('descending').voids[0], A = el('ascending').voids[0], G = el('gallery').voids[0];
   const dy = (z) => floorY(D, z), ay = (z) => floorY(A, z), gy = (z) => floorY(G, z);
   const door = SPOTS.find((s) => s.key === 'entrance').pos, king = SPOTS.find((s) => s.key === 'king').pos;
-  const KC = L.kingsChamber, kf = KC.y0, sarc = el('king').sarcophagus;
+  const KC = L.kingsChamber, kf = KC.y0, sarc = el('king').sarcophagus, QC = L.queensChamber, SUB = L.subterranean;
+  const queen = SPOTS.find((s) => s.key === 'queen'), sub = SPOTS.find((s) => s.key === 'subterranean');
   // up through the hole where the ascending passage leaves the descending passage's roof:
   // straight up where the whole body fits in the hole, onto the ascending floor's line
   const zHole = L.ascendingStartZ - 0.35;
@@ -92,6 +94,13 @@ export function walkLegs() {
       title: 'The antechamber', sub: `${note('antechamber')}.` },
     { dur: 5, look: new THREE.Vector3(sarc.x, kf + 0.6, sarc.z), at: new THREE.Vector3(...king),
       title: "The King's Chamber", sub: `${note('king')}. The sarcophagus stands at its west end.` },
+    // cuts (cut: the walker is put there, facing yaw0) to the two rooms off the way up
+    { dur: 5.5, cut: true, yaw0: queen.yaw, at: new THREE.Vector3(...queen.pos),
+      look: new THREE.Vector3(QC.x1, QC.y0 + 1.8, 0.6), // the niche in the east wall
+      title: "The Queen's Chamber", sub: `${note('queen')}. It lies off the foot of the Grand Gallery, along a low horizontal passage.` },
+    { dur: 5.5, cut: true, yaw0: Math.PI, at: new THREE.Vector3(...sub.pos),
+      look: new THREE.Vector3((SUB.x0 + SUB.x1) / 2 - 3, SUB.y0 + 1.5, (SUB.z0 + SUB.z1) / 2), // toward the uncut west half
+      title: 'The subterranean chamber', sub: `${note('subterranean')}. It is 30 m under the base, at the bottom of the descending passage.` },
   ];
 }
 
@@ -379,7 +388,10 @@ export class KhufuTour {
     this.leg++; this.u = 0;
     if (this.leg >= this.legs.length) { this.toFinale(); return; }
     const g = this.legs[this.leg];
-    if (g.look) this.lookFrom = { yaw: this.yaw, pitch: this.pitch, to: faceYaw(g.at, g.look) };
+    if (g.cut) { this.yaw = g.yaw0; this.pitch = 0; this.app.walker.drive(g.at, this.yaw, this.pitch); }
+    // look at the thing: turn to it and raise or lower the eyes to it
+    if (g.look) this.lookFrom = { yaw: this.yaw, pitch: this.pitch, to: faceYaw(g.at, g.look),
+      pitchTo: Math.max(-0.35, Math.min(0.35, Math.atan2(g.look.y - (g.at.y + EYE), Math.hypot(g.look.x - g.at.x, g.look.z - g.at.z)))) };
     this.caption(g.title, g.sub);
   }
   // one frame of a leg: the feet along the path at an eased distance, the head turned to
@@ -392,7 +404,7 @@ export class KhufuTour {
     if (g.look) {
       const F = this.lookFrom, k = ease(Math.min(1, this.u * 1.6));
       this.yaw = angLerp(F.yaw, F.to, k);
-      this.pitch = lerp(F.pitch, -0.12, k);
+      this.pitch = lerp(F.pitch, F.pitchTo, k);
       W.drive(g.at, this.yaw, this.pitch);
     } else {
       const d = g.path.length * e, p = g.path.at(d), ahead = g.path.at(d + 1.5);
@@ -416,6 +428,10 @@ export class KhufuTour {
     this.app.leaveWalk();
     this.app.setXray(false);
     this.xrayBefore = false; // the tour ends with X-ray off, whatever it was before
+    // leaving a walk puts the camera above and behind the walker, which from the rooms
+    // underground or deep inside is in the masonry: start outside, on the same side
+    const c = this.app.camera.position, a = Math.atan2(c.z, c.x);
+    this.place(this.pos.set(Math.cos(a) * (HALF + 90), 30, Math.sin(a) * (HALF + 90)), new THREE.Vector3(0, 40, 0));
     this.grab();
     this.ring0 = Math.atan2(this.from.pos.z, this.from.pos.x);
     this.phase = 'rise'; this.u = 0;
