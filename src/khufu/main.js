@@ -390,7 +390,11 @@ client.init(RAMP && THEORY_IDS.includes(RAMP) ? { ramp: { id: RAMP } } : {});
 // ---- guided tour (src/khufu/tour.js) -------------------------------------------------
 const tour = new KhufuTour({
   timeline, client, bubble, camera, orbit, theoryId: RAMP && THEORY_IDS.includes(RAMP) ? RAMP : 'straight-zigzag',
-  setXray, isXray: () => xray,
+  setXray, isXray: () => xray, walker,
+  // the walk inside: the walker driven by the tour (no pointer lock, no walking hints), and
+  // back to the orbit view outside, as leaving a walk does
+  enterWalk: (p, yaw) => { walker.enter(p, yaw); orbit.enabled = false; },
+  leaveWalk: () => { walker.drive(null); setWalk(false); },
   onCaption: (title, sub) => {
     $('tourCaption').style.display = title ? 'block' : 'none';
     if (title) { $('tourTitle').textContent = title; $('tourSub').textContent = sub; }
