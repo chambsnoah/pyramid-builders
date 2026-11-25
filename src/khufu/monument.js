@@ -184,7 +184,9 @@ export class Monument {
     this.mats = {
       casing: std({ map: TX.casing.map, normalMap: TX.casing.normalMap, normalScale: new THREE.Vector2(0.8, 0.8), roughness: 0.6, vertexColors: true }),
       cap: std({ map: TX.lime.map, normalMap: TX.lime.normalMap }),
-      pyramidion: std({ color: 0xead9a2, metalness: 0.55, roughness: 0.32 }),
+      // gilded: a warm gold, only a little metallic (there is no environment for a metal to
+      // reflect, so a full metal reads brown), with a faint glow so the shaded faces stay gold
+      pyramidion: std({ color: 0xe6bf55, metalness: 0.3, roughness: 0.35, emissive: 0x4a3508 }),
       hull: std({ map: TX.hull, roughness: 0.6 }),
       stair: std({ map: TX.pave.map, normalMap: TX.pave.normalMap, color: 0xf2e6cc }),
     };
