@@ -24,7 +24,8 @@ import { FIGURE } from './sim/works.js';
 export const NEAR = 120, NEAR_OUT = 140, FAR = 700, BUDGET = 1500;
 
 const CROWD_POSE = ['rest', 'pull', 'idle', 'pour', 'lever', 'push', 'kneel']; // by POSE
-const STONE_COLOR = [0xe2cd9f, 0xf4ecd8, 0x9b7f78, 0xf1e6cf].map((c) => new THREE.Color(c)); // core, casing, granite, capstone
+// core, casing, granite, and the capstone gilded like the pyramidion it becomes (monument.js)
+const STONE_COLOR = [0xe2cd9f, 0xf4ecd8, 0x9b7f78, 0xd9b44a].map((c) => new THREE.Color(c));
 const HAULING = new Set([ACT.HAUL, ACT.WAIT, ACT.TURN]);
 
 // a sled 1 m wide and 1 m long (scaled per gang), 0.22 m high: two runners and crossbars

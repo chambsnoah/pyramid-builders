@@ -19,7 +19,7 @@ import { HALF, HEIGHT, COURSES, ELEMENTS, LEVELS, SPOTS, AXIS_X, floorY } from '
 import { ACT } from './sim/gangs.js';
 import { DEFAULTS, DAY, YEAR, YEAR_DAYS } from './sim/params.js';
 
-export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, OUTRO = 5, DOOR = 3.5, RISE = 3, CIRCLE = 28; // seconds of wall time
+export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, CROWN = 6, OUTRO = 5, DOOR = 3.5, RISE = 3, CIRCLE = 28; // seconds of wall time
 // the closing circle: radius and height of the camera, and the height it looks at
 const RING = { r: 430, y: 120, look: 50 };
 const WAIT_MAX = 6; // give up waiting for the worker after this long and carry on
@@ -318,6 +318,7 @@ export class KhufuTour {
       if (this.waited > WAIT_MAX) this.arrive();
       return this.target;
     }
+    if (this.phase === 'crown') return this.updateCrown(dt);
     if (this.phase === 'door') return this.updateDoor(dt);
     if (this.phase === 'walk') return this.updateWalk(dt);
     if (this.phase === 'rise' || this.phase === 'circle') return this.updateFinale(dt);
@@ -340,7 +341,7 @@ export class KhufuTour {
       if (this.held >= APPROACH) this.phase = 'hold';
     } else {
       this.place(live.pos, live.target);
-      if (this.held >= APPROACH + HOLD) this.next();
+      if (this.held >= APPROACH + HOLD) { if (s.kind === 'capstone') this.toCrown(); else this.next(); }
     }
     this.drewBubble = true;
     return this.target;
@@ -356,6 +357,26 @@ export class KhufuTour {
     timeline.setSpeed(0); // the label reads 1× while the stop plays
     this.wide = { pos: this.app.camera.position.clone(), target: this.target.clone() };
     this.phase = 'approach'; this.held = 0;
+  }
+
+  // ---- the capstone set ------------------------------------------------------------
+  // The capstone stop ends just before the set; then the build is finished, the gangs go
+  // home, and the camera closes in on the gilded pyramidion and turns round it.
+  toCrown() {
+    this.app.timeline.seek(this.S.endT);
+    this.grab();
+    this.crown0 = Math.atan2(this.from.pos.z, this.from.pos.x);
+    this.phase = 'crown'; this.u = 0;
+    this.caption('The capstone set', `The pyramidion crowns the pyramid, ${HEIGHT} m above the plateau. None survives at Giza; it is drawn here gilded, as many think it was.`);
+  }
+  updateCrown(dt) {
+    this.u = Math.min(1, this.u + dt / CROWN);
+    const a = this.crown0 + this.u * 0.9, k = ease(Math.min(1, this.u / 0.4)), A = this.from;
+    // from where the capstone stop left the camera onto a ring round the apex
+    const ring = new THREE.Vector3(Math.cos(a) * 9, HEIGHT + 1.2, Math.sin(a) * 9), look = new THREE.Vector3(0, HEIGHT - 1.2, 0);
+    this.place(this.pos.lerpVectors(A.pos, ring, k), new THREE.Vector3().lerpVectors(A.target, look, k));
+    if (this.u >= 1) this.next();
+    return this.target;
   }
 
   // ---- the walk inside ------------------------------------------------------------
