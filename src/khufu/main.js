@@ -18,6 +18,7 @@ import { TUNNEL } from './sim/works.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
 import { THEORY_IDS } from './sim/ramps/index.js';
 import { StatsPanel } from './statsPanel.js';
+import { KhufuTour } from './tour.js';
 import { DAY, YEAR } from './sim/params.js';
 
 buildTextures();
@@ -201,6 +202,9 @@ SPOTS.forEach((s, i) => {
 });
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
+  // during the tour the keys only end it (Esc or T)
+  if (tour.active) { if (e.code === 'Escape' || e.code === 'KeyT') { endTour(); e.preventDefault(); } return; }
+  if (e.code === 'KeyT' && timeline.ready) { startTour(); return; }
   if (!walker.enabled && timeline.ready) {
     if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') { timeline.stepDays((e.code === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 25 : 1)); e.preventDefault(); }
     if (e.code === 'KeyP' || (e.code === 'Space' && e.target.tagName !== 'BUTTON')) { timeline.setPlaying(!timeline.playing); e.preventDefault(); }
@@ -271,6 +275,8 @@ const client = new SimClient({
     else if (params.has('courses')) { const n = +params.get('courses'); t = n >= COURSE_COUNT ? summary.endT : summary.courseDone[Math.max(0, n - 1)]; }
     timeline.seek(t);
     if (params.has('play') && !restarted) timeline.setPlaying(true);
+    $('tour').disabled = false;
+    if (params.has('tour') && !restarted) startTour();
   },
   onState: (m, timing) => {
     if ('layout' in m) working.setLayout(m.layout);
@@ -282,12 +288,40 @@ const client = new SimClient({
     bubble.setVisible(!view.done);
     stats.update(view, m.t, timing);
   },
-  onRestart: (n) => { timeline.setEnabled(false); timeline.setPlaying(false); timeline.setProgress(`The event model stopped; running it again (attempt ${n + 1})…`); },
+  onRestart: (n) => { endTour(); $('tour').disabled = true; timeline.setEnabled(false); timeline.setPlaying(false); timeline.setProgress(`The event model stopped; running it again (attempt ${n + 1})…`); },
   onError: (msg) => { console.error('[khufu] worker:', msg); timeline.setProgress('The event model failed to run (see the console)'); },
 });
 // ?ramp=spiral or ?ramp=internal runs another ramp theory (src/khufu/sim/ramps/)
 const RAMP = params.get('ramp');
 client.init(RAMP && THEORY_IDS.includes(RAMP) ? { ramp: { id: RAMP } } : {});
+
+// ---- guided tour (src/khufu/tour.js) -------------------------------------------------
+const tour = new KhufuTour({
+  timeline, client, bubble, camera, orbit, theoryId: RAMP && THEORY_IDS.includes(RAMP) ? RAMP : 'straight-zigzag',
+  setXray, isXray: () => xray,
+  onCaption: (title, sub) => {
+    $('tourCaption').style.display = title ? 'block' : 'none';
+    if (title) { $('tourTitle').textContent = title; $('tourSub').textContent = sub; }
+  },
+  onEnd: () => endTour(),
+});
+function startTour(opts) {
+  if (walker.enabled) setWalk(false);
+  if (follow >= 0) setFollow(false);
+  if (!tour.start(opts)) return;
+  orbit.enabled = false;
+  document.body.classList.add('touring');
+  $('tour').classList.add('on'); $('tour').textContent = 'End tour';
+}
+function endTour() {
+  tour.stop();
+  orbit.enabled = true;
+  document.body.classList.remove('touring');
+  $('tour').classList.remove('on'); $('tour').textContent = 'Tour';
+}
+$('tour').onclick = () => (tour.active ? endTour() : startTour());
+$('tourEnd').onclick = () => endTour();
+$('tour').disabled = true; // until the model has run
 
 // which room the walker is in
 function whereIs(p) {
@@ -393,6 +427,7 @@ window.__khufu = {
     return { speed, steps, replies, worst, jumps, gangsInDetail: bubble.inside.size, workers: bubble.info.workers };
   },
   setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
+  get tour() { return tour; }, startTour, endTour,
   view: (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); orbit.target.set(tx, ty, tz); orbit.update(); },
   // run `seconds` of frames and report the frame rate (requestAnimationFrame timing)
   measure: (seconds = 3) => new Promise((res) => {
@@ -409,8 +444,8 @@ window.__khufu = {
 let hudT = 0;
 function frame() {
   const dt = Math.min(clock.getDelta(), 0.1);
-  timeline.tick(dt);
-  if (timeline.ready && bubble.visible) bubble.update(timeline.t, camera, dt);
+  if (tour.active) tour.update(dt); else timeline.tick(dt);
+  if (timeline.ready && bubble.visible && !(tour.active && tour.drewBubble)) bubble.update(timeline.t, camera, dt);
   // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
   if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled, camera); if (tn) { tunnelNow = tn; applyReveal(); } }
   // a followed levy gang that goes home hands the camera to the working gang nearest the view
@@ -419,7 +454,7 @@ function frame() {
     const d = followNow.clone().sub(followAt);
     camera.position.add(d); orbit.target.add(d); followAt.copy(followNow);
   }
-  if (walker.enabled) walker.update(dt); else orbit.update();
+  if (walker.enabled) walker.update(dt); else if (!tour.active) orbit.update();
   const climbShown = walker.enabled && walker.canClimb;
   if (climbShown !== frame.climbShown) { frame.climbShown = climbShown; $('climb').style.display = climbShown ? 'block' : 'none'; }
   // far detail level: from far away the finished pyramid is a textured hull and the rooms are
