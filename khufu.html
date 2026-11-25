@@ -35,6 +35,13 @@
   #hint { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); padding: 6px 12px; font-size: 12px; color: var(--dim); display: none; pointer-events: none; text-align: center; }
   #climb { position: fixed; left: 50%; top: calc(50% + 28px); transform: translateX(-50%); padding: 4px 10px; font-size: 12px; color: var(--ink); display: none; pointer-events: none; }
   #cross { position: fixed; left: 50%; top: 50%; width: 4px; height: 4px; margin: -2px; border-radius: 50%; background: rgba(255,255,255,0.75); display: none; pointer-events: none; }
+  /* guided tour */
+  #tourCaption { position: fixed; left: 50%; bottom: 64px; transform: translateX(-50%); width: min(640px, calc(100% - 24px)); padding: 12px 16px; display: none; z-index: 6; }
+  #tourCaption b { display: block; font-size: 17px; color: var(--gold); margin-bottom: 2px; padding-right: 76px; }
+  #tourCaption span { display: block; font-size: 14px; color: var(--ink); }
+  #tourCaption button { position: absolute; top: 8px; right: 8px; appearance: none; border: 0; background: rgba(255,255,255,0.1); color: var(--dim); border-radius: 6px; font: 11px system-ui; padding: 3px 8px; cursor: pointer; }
+  body.touring #simstats, body.touring #rooms, body.touring #controls > :not(#tour) { display: none !important; }
+  body.touring #timeline { pointer-events: none; }
   .label { padding: 2px 7px; border-radius: 6px; background: rgba(20, 14, 8, 0.72); border: 1px solid rgba(233, 185, 73, 0.5); color: #fff4d8; font-size: 11px; white-space: nowrap; pointer-events: none; }
   /* timeline in years, between the side panels */
   #timeline { position: fixed; top: 12px; left: 324px; right: 234px; padding: 6px 10px 5px; z-index: 5; }
@@ -134,7 +141,9 @@
   <span class="sep"></span>
   <button id="zoomIn" title="Zoom in (+)" aria-label="Zoom in">+</button>
   <button id="zoomOut" title="Zoom out (−)" aria-label="Zoom out">−</button>
+  <button id="tour" title="A guided tour of the build, milestone by milestone (T; Esc ends it)">Tour</button>
 </div>
+<div id="tourCaption" class="glass"><b id="tourTitle"></b><span id="tourSub"></span><button id="tourEnd" title="End the tour (Esc)">End tour</button></div>
 <script type="module" src="/src/khufu/main.js"></script>
 </body>
 </html>
