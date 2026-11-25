@@ -10,6 +10,7 @@
 // After the finished monument, a walk inside: the camera comes down to the entrance on the
 // north face and becomes the walker, which glides down the descending passage, up the
 // ascending passage and the Grand Gallery, through the antechamber into the King's Chamber.
+// Then out again, X-ray off, for one slow circle round the finished pyramid.
 // No DOM here: main.js gives it the timeline, the worker client, the bubble, the camera and
 // a few switches, and draws the captions it returns.
 import * as THREE from 'three';
@@ -17,7 +18,9 @@ import { HALF, HEIGHT, COURSES, ELEMENTS, LEVELS, SPOTS, AXIS_X, floorY } from '
 import { ACT } from './sim/gangs.js';
 import { DEFAULTS, DAY, YEAR, YEAR_DAYS } from './sim/params.js';
 
-export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, OUTRO = 5, DOOR = 3.5; // seconds of wall time
+export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, OUTRO = 5, DOOR = 3.5, RISE = 3, CIRCLE = 28; // seconds of wall time
+// the closing circle: radius and height of the camera, and the height it looks at
+const RING = { r: 430, y: 120, look: 50 };
 const WAIT_MAX = 6; // give up waiting for the worker after this long and carry on
 const ease = (u) => u * u * (3 - 2 * u);
 // share of a leg's length covered at time u: speeding up over the first `a`, a steady pace,
@@ -206,7 +209,7 @@ export class KhufuTour {
       // the finished monument
       this.stop1 = { kind: 'end', t: S.endT, angle: (this.stops.at(-1)?.angle ?? 1) + 0.6, xray: false };
       this.wide = this.widePose(this.stop1, HEIGHT);
-      this.caption('Finished', `${fmt(S.blocks)} blocks in ${(S.endT / YEAR).toFixed(1)} years of ${YEAR_DAYS} ten-hour working days. Scrub the timeline, see through it in X-ray, or walk inside.`);
+      this.caption('Finished', `${fmt(S.blocks)} blocks in ${(S.endT / YEAR).toFixed(1)} years of ${YEAR_DAYS} ten-hour working days. Now a walk inside.`);
       return;
     }
     const s = this.stop1 = this.stops[this.idx];
@@ -308,6 +311,7 @@ export class KhufuTour {
     }
     if (this.phase === 'door') return this.updateDoor(dt);
     if (this.phase === 'walk') return this.updateWalk(dt);
+    if (this.phase === 'rise' || this.phase === 'circle') return this.updateFinale(dt);
     if (s.kind === 'end') {
       // a slow turn round the finished monument, then the tour hands back the controls
       this.held += dt;
@@ -373,7 +377,7 @@ export class KhufuTour {
   }
   nextLeg() {
     this.leg++; this.u = 0;
-    if (this.leg >= this.legs.length) { this.stop(); this.app.onEnd?.(); return; }
+    if (this.leg >= this.legs.length) { this.toFinale(); return; }
     const g = this.legs[this.leg];
     if (g.look) this.lookFrom = { yaw: this.yaw, pitch: this.pitch, to: faceYaw(g.at, g.look) };
     this.caption(g.title, g.sub);
@@ -403,6 +407,37 @@ export class KhufuTour {
     }
     if (this.u >= 1) this.nextLeg();
     return null;
+  }
+
+  // ---- the closing circle ----------------------------------------------------------
+  // out of the walk (it leaves the camera outside, above where the walker was), X-ray off,
+  // up to the ring, then once round the finished pyramid
+  toFinale() {
+    this.app.leaveWalk();
+    this.app.setXray(false);
+    this.xrayBefore = false; // the tour ends with X-ray off, whatever it was before
+    this.grab();
+    this.ring0 = Math.atan2(this.from.pos.z, this.from.pos.x);
+    this.phase = 'rise'; this.u = 0;
+    const S = this.S;
+    this.caption("Khufu's pyramid", `Finished after ${(S.endT / YEAR).toFixed(1)} years: ${fmt(S.blocks)} blocks, ${HEIGHT} m high on a ${(2 * HALF).toFixed(1)} m base, the tallest building on Earth for about 3,800 years. Scrub the timeline, see through it in X-ray, or walk inside.`);
+  }
+  ringAt(a, out = new THREE.Vector3()) { return out.set(Math.cos(a) * RING.r, RING.y, Math.sin(a) * RING.r); }
+  updateFinale(dt) {
+    const look = new THREE.Vector3(0, RING.look, 0);
+    if (this.phase === 'rise') {
+      this.u = Math.min(1, this.u + dt / RISE);
+      const e = ease(this.u), A = this.from, ra = Math.hypot(A.pos.x, A.pos.z), rr = lerp(ra, RING.r, e);
+      this.pos.set(Math.cos(this.ring0) * rr, lerp(A.pos.y, RING.y, e), Math.sin(this.ring0) * rr);
+      this.place(this.pos, new THREE.Vector3().lerpVectors(A.target, look, e));
+      if (this.u >= 1) { this.phase = 'circle'; this.u = 0; }
+      return this.target;
+    }
+    // a full turn, easing in and out of it
+    this.u = Math.min(1, this.u + dt / CIRCLE);
+    this.place(this.ringAt(this.ring0 + 2 * Math.PI * glide(this.u, 0.1), this.pos), look);
+    if (this.u >= 1) { this.stop(); this.app.onEnd?.(); }
+    return this.target;
   }
 
   // where the tour is, for measurements
