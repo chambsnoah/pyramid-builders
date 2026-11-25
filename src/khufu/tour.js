@@ -7,16 +7,27 @@
 //  - approach: the timeline plays at 1× while the camera closes in on a gang that is hauling
 //    (a ramp stop) or circles the room (a room stop);
 //  - hold: a few more seconds at 1×, the camera following the gang, then on to the next stop.
+// After the finished monument, a walk inside: the camera comes down to the entrance on the
+// north face and becomes the walker, which glides down the descending passage, up the
+// ascending passage and the Grand Gallery, through the antechamber into the King's Chamber.
 // No DOM here: main.js gives it the timeline, the worker client, the bubble, the camera and
 // a few switches, and draws the captions it returns.
 import * as THREE from 'three';
-import { HALF, HEIGHT, COURSES, ELEMENTS } from './data.js';
+import { HALF, HEIGHT, COURSES, ELEMENTS, LEVELS, SPOTS, AXIS_X, floorY } from './data.js';
 import { ACT } from './sim/gangs.js';
 import { DEFAULTS, DAY, YEAR, YEAR_DAYS } from './sim/params.js';
 
-export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, OUTRO = 7; // seconds of wall time
+export const TRAVEL = 4.5, APPROACH = 3, HOLD = 7, OUTRO = 5, DOOR = 3.5; // seconds of wall time
 const WAIT_MAX = 6; // give up waiting for the worker after this long and carry on
 const ease = (u) => u * u * (3 - 2 * u);
+// share of a leg's length covered at time u: speeding up over the first `a`, a steady pace,
+// slowing down over the last `a` (the top speed is 1 / (1 - a) of the average)
+const glide = (u, a = 0.15) => {
+  const v = 1 / (1 - a); // top speed, in lengths per leg
+  if (u < a) return (v * u * u) / (2 * a);
+  if (u > 1 - a) return 1 - (v * (1 - u) * (1 - u)) / (2 * a);
+  return v * (u - a / 2);
+};
 const lerp = (a, b, u) => a + (b - a) * u;
 const angLerp = (a, b, u) => { let d = (b - a) % (2 * Math.PI); if (d > Math.PI) d -= 2 * Math.PI; if (d < -Math.PI) d += 2 * Math.PI; return a + d * u; };
 const yearOf = (t) => Math.floor(t / YEAR) + 1;
@@ -31,6 +42,55 @@ export function topAt(S, t) {
 }
 // a little below a room's X-ray label (null if there is no such room, and its stop is skipped)
 const roomAt = (id) => { const el = ELEMENTS.find((e) => e.id === id); return el?.label ? new THREE.Vector3(el.label[0], el.label[1] - 3, el.label[2]) : null; };
+
+// ---- the walk inside --------------------------------------------------------------
+const EYE = 1.62; // the walker's eye above its feet, standing
+// a polyline through 3D points (the walker's feet), measured along its length
+class Path {
+  constructor(pts) {
+    this.pts = pts.map((p) => new THREE.Vector3(...p));
+    this.cum = [0];
+    for (let i = 1; i < this.pts.length; i++) this.cum.push(this.cum[i - 1] + this.pts[i].distanceTo(this.pts[i - 1]));
+    this.length = this.cum.at(-1);
+  }
+  at(d, out = new THREE.Vector3()) {
+    d = Math.max(0, Math.min(this.length, d));
+    let i = 1;
+    while (i < this.pts.length - 1 && this.cum[i] < d) i++;
+    const a = this.cum[i - 1], b = this.cum[i];
+    return out.lerpVectors(this.pts[i - 1], this.pts[i], b > a ? (d - a) / (b - a) : 1);
+  }
+}
+// heading that looks from a toward b (the walker looks along (-sin yaw, -cos yaw))
+const faceYaw = (a, b) => Math.atan2(-(b.x - a.x), -(b.z - a.z));
+
+// The legs of the walk, each with its caption. The floors are the rooms' own (data.js), so
+// the feet stay on them: every passage floor is a straight slope along the axis.
+export function walkLegs() {
+  const el = (id) => ELEMENTS.find((e) => e.id === id), L = LEVELS, X = AXIS_X;
+  const D = el('descending').voids[0], A = el('ascending').voids[0], G = el('gallery').voids[0];
+  const dy = (z) => floorY(D, z), ay = (z) => floorY(A, z), gy = (z) => floorY(G, z);
+  const door = SPOTS.find((s) => s.key === 'entrance').pos, king = SPOTS.find((s) => s.key === 'king').pos;
+  const KC = L.kingsChamber, kf = KC.y0, sarc = el('king').sarcophagus;
+  // up through the hole where the ascending passage leaves the descending passage's roof:
+  // straight up where the whole body fits in the hole, onto the ascending floor's line
+  const zHole = L.ascendingStartZ - 0.35;
+  // the great step is climbed straight up where the gallery floor and the step overlap
+  const gz0 = L.galleryFoot.z, gz1 = L.galleryTop.z - 0.03, zStep = L.greatStepSouth - 0.2;
+  const note = (id) => el(id).note.replace(/;/g, ',');
+  return [
+    { dur: 7, path: new Path([door, [X, L.entranceSill, L.entranceZ], [X, dy(zHole), zHole]]),
+      title: 'Walking in', sub: `The entrance is on the north face, ${L.entranceSill.toFixed(0)} m up. The descending passage drops at 26°, only 1.05 m wide and 1.2 m high.` },
+    { dur: 8, path: new Path([[X, dy(zHole), zHole], [X, ay(zHole), zHole], [X, ay(gz0), gz0]]),
+      title: 'The ascending passage', sub: 'It leaves through the roof of the descending passage and climbs at 26°. The granite plugs that seal its lower end are left out, so it can be walked.' },
+    { dur: 9, path: new Path([[X, gy(gz0), gz0], [X, gy(gz1), gz1], [X, kf, gz1], [X, kf, zStep]]),
+      title: 'The Grand Gallery', sub: `${note('gallery')}. At its top, the great step.` },
+    { dur: 5, path: new Path([[X, kf, zStep], [X, kf, KC.z0 + 0.4], king]),
+      title: 'The antechamber', sub: `${note('antechamber')}.` },
+    { dur: 5, look: new THREE.Vector3(sarc.x, kf + 0.6, sarc.z), at: new THREE.Vector3(...king),
+      title: "The King's Chamber", sub: `${note('king')}. The sarcophagus stands at its west end.` },
+  ];
+}
 
 // The stops for a finished run (summary from the worker) and its ramp theory. A stop whose
 // milestone is missing is left out (for the spiral's stand-in too): each stop is only built
@@ -125,6 +185,8 @@ export class KhufuTour {
     const { timeline } = this.app;
     timeline.setSpeed(this.speedBefore);
     this.app.setXray(this.xrayBefore);
+    // (after the X-ray: leaving the walk inside turns X-ray on, to show where it ended)
+    if (this.app.walker.driven) this.app.leaveWalk();
     this.app.onCaption(null);
   }
 
@@ -244,12 +306,14 @@ export class KhufuTour {
       if (this.waited > WAIT_MAX) this.arrive();
       return this.target;
     }
+    if (this.phase === 'door') return this.updateDoor(dt);
+    if (this.phase === 'walk') return this.updateWalk(dt);
     if (s.kind === 'end') {
       // a slow turn round the finished monument, then the tour hands back the controls
       this.held += dt;
       const W = this.wide, a = Math.atan2(W.pos.z, W.pos.x) + this.held * 0.03, r = Math.hypot(W.pos.x, W.pos.z);
       this.place(this.pos.set(Math.cos(a) * r, W.pos.y, Math.sin(a) * r), W.target);
-      if (this.held >= OUTRO) { this.stop(); this.app.onEnd?.(); }
+      if (this.held >= OUTRO) this.toDoor();
       return this.target;
     }
     // approach and hold: the timeline plays at 1×
@@ -281,10 +345,70 @@ export class KhufuTour {
     this.phase = 'approach'; this.held = 0;
   }
 
+  // ---- the walk inside ------------------------------------------------------------
+  // the camera comes down to the entrance, where the walker's eye will be
+  toDoor() {
+    this.legs = walkLegs();
+    this.grab();
+    const p = this.legs[0].path.pts[0];
+    this.door = { pos: new THREE.Vector3(p.x, p.y + EYE, p.z), target: new THREE.Vector3(p.x, p.y + EYE - 0.2, p.z + 5) };
+    this.phase = 'door'; this.u = 0;
+  }
+  updateDoor(dt) {
+    this.u = Math.min(1, this.u + dt / DOOR);
+    const e = ease(this.u), A = this.from, W = this.door;
+    // round the axis to the north face, then in to the door (the last part straight)
+    const ra = Math.hypot(A.pos.x, A.pos.z), rb = Math.hypot(W.pos.x, W.pos.z);
+    const ang = angLerp(Math.atan2(A.pos.z, A.pos.x), Math.atan2(W.pos.z, W.pos.x), Math.min(1, e * 1.4)), rr = lerp(ra, rb, e);
+    this.pos.set(Math.cos(ang) * rr, lerp(A.pos.y, W.pos.y, e), Math.sin(ang) * rr);
+    this.place(this.pos, new THREE.Vector3().lerpVectors(A.target, W.target, e));
+    if (this.u >= 1) {
+      const p = this.legs[0].path.pts[0];
+      this.app.enterWalk(p, Math.PI);
+      this.yaw = Math.PI; this.pitch = Math.atan2(-0.2, 5);
+      this.app.walker.drive(p, this.yaw, this.pitch);
+      this.phase = 'walk'; this.leg = -1; this.nextLeg();
+    }
+    return this.target;
+  }
+  nextLeg() {
+    this.leg++; this.u = 0;
+    if (this.leg >= this.legs.length) { this.stop(); this.app.onEnd?.(); return; }
+    const g = this.legs[this.leg];
+    if (g.look) this.lookFrom = { yaw: this.yaw, pitch: this.pitch, to: faceYaw(g.at, g.look) };
+    this.caption(g.title, g.sub);
+  }
+  // one frame of a leg: the feet along the path at an eased distance, the head turned to
+  // where the path goes (or, at the end, to what there is to see)
+  updateWalk(dt) {
+    const g = this.legs[this.leg], W = this.app.walker;
+    this.u = Math.min(1, this.u + dt / g.dur);
+    const e = glide(this.u);
+    let speed = 0;
+    if (g.look) {
+      const F = this.lookFrom, k = ease(Math.min(1, this.u * 1.6));
+      this.yaw = angLerp(F.yaw, F.to, k);
+      this.pitch = lerp(F.pitch, -0.12, k);
+      W.drive(g.at, this.yaw, this.pitch);
+    } else {
+      const d = g.path.length * e, p = g.path.at(d), ahead = g.path.at(d + 1.5);
+      const h = Math.hypot(ahead.x - p.x, ahead.z - p.z);
+      // turn smoothly toward the way ahead, and look a little up or down the slope
+      const k = Math.min(1, dt * 4);
+      if (h > 0.05) this.yaw = angLerp(this.yaw, Math.atan2(-(ahead.x - p.x), -(ahead.z - p.z)), k);
+      const want = h > 0.05 ? Math.max(-0.45, Math.min(0.45, Math.atan2(ahead.y - p.y, h) * 0.7)) : this.pitch;
+      this.pitch += (want - this.pitch) * k;
+      speed = (g.path.length * (glide(Math.min(1, this.u + 0.01)) - e)) / (0.01 * g.dur);
+      W.drive(p, this.yaw, this.pitch, speed, g.path.at(d + Math.max(0.8, speed * 0.4)));
+    }
+    if (this.u >= 1) this.nextLeg();
+    return null;
+  }
+
   // where the tour is, for measurements
   get info() {
     if (!this.active) return { active: false };
     const s = this.stop1;
-    return { active: true, stop: this.idx, of: this.stops.length, milestone: s.milestone || 'finished', phase: this.phase, gang: this.gang, t: this.app.timeline.t };
+    return { active: true, stop: this.idx, of: this.stops.length, milestone: s.milestone || 'finished', phase: this.phase, gang: this.gang, leg: this.phase === 'walk' ? this.leg : undefined, t: this.app.timeline.t };
   }
 }

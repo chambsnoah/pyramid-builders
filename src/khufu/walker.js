@@ -122,6 +122,7 @@ export class Walker {
   }
   // scramble up onto a ledge, if there is one within `reach`
   tryClimb(reach, around = 0) {
+    if (this.driven) return false;
     if (this.climb) return false;
     const to = this.findClimb(reach, around);
     if (!to) return false;
@@ -130,13 +131,24 @@ export class Walker {
     return true;
   }
 
+  // Driven from outside (the guided tour): the feet, heading and pitch are set each frame and
+  // the walker only crouches, bobs, lights the torch and places the camera; no keys, gravity
+  // or climbing. drive(null) hands it back to the keys.
+  // (speed, m/s, only sets the pace of the head bob; ahead: where the feet will be shortly,
+  // so the body starts to crouch before a low ceiling instead of ducking at it)
+  drive(p, yaw, pitch, speed = 0, ahead = null) {
+    if (!p) { this.driven = false; this.ahead = null; return; }
+    this.driven = true; this.ahead = ahead;
+    this.pos.copy(p); this.vel.set(-Math.sin(yaw) * speed, 0, -Math.cos(yaw) * speed); this.vy = 0; this.climb = null;
+    this.yaw = yaw; this.pitch = pitch;
+  }
   enter(p, yaw) {
     this.enabled = true;
     this.teleport(p, yaw);
     this.camera.near = 0.03; this.camera.far = 9000; this.camera.updateProjectionMatrix();
   }
   exit() {
-    this.enabled = false; this.torch.intensity = 0; this.climb = null;
+    this.enabled = false; this.driven = false; this.torch.intensity = 0; this.climb = null;
     if (document.pointerLockElement === this.dom) document.exitPointerLock();
   }
   teleport(p, yaw) {
@@ -167,12 +179,15 @@ export class Walker {
       this.pos.lerpVectors(c.from, c.to, e);
       this.pos.y = c.from.y + (c.to.y - c.from.y) * Math.min(1, e * 1.6);
       if (k >= 1) { this.pos.copy(c.to); this.climb = null; this.vel.set(0, 0, 0); }
-    } else this.move(dt);
+    } else if (!this.driven) this.move(dt);
     this.climbCheck -= dt;
-    if (this.climbCheck <= 0) { this.climbCheck = 0.15; this.canClimb = !this.climb && !!this.findClimb(CLIMB, 4); }
+    if (this.driven) this.canClimb = false;
+    else if (this.climbCheck <= 0) { this.climbCheck = 0.15; this.canClimb = !this.climb && !!this.findClimb(CLIMB, 4); }
     // crouch to fit the space overhead
     const room = this.headroom(this.pos.x, this.pos.z, this.pos.y);
-    const want = Math.min(STAND, Math.max(CRAWL, room - 0.06));
+    let soon = room;
+    if (this.driven && this.ahead) soon = Math.min(room, this.headroom(this.ahead.x, this.ahead.z, this.ahead.y) + Math.max(0, this.ahead.y - this.pos.y));
+    const want = Math.min(STAND, Math.max(CRAWL, soon - 0.06));
     this.height += (want - this.height) * Math.min(1, dt * (want < this.height ? 18 : 5));
     if (this.height > room - 0.04) this.height = Math.max(CRAWL - 0.06, room - 0.04);
     const moving = Math.hypot(this.vel.x, this.vel.z);
