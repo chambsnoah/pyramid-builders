@@ -207,6 +207,8 @@ function zoom(k) {
   if (walker.enabled) return;
   const now = camera.position.distanceTo(orbit.target);
   const to = THREE.MathUtils.clamp((zoomTo ? zoomTo.to : now) * k, orbit.minDistance, orbit.maxDistance);
+  // (pressed during a double-click glide, the glide still ends on the point clicked: stopping
+  // it would leave the pivot partway, on nothing in particular)
   zoomTo = { from: now, to, t0: performance.now(), ms: ZOOM_MS, a: zoomTo?.b ? orbit.target.clone() : null, b: zoomTo?.b || null };
 }
 function centreOn(p) {
