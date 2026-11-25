@@ -29,67 +29,69 @@ export function topAt(S, t) {
   for (let i = 0; i < S.courseOpen.length; i++) if (S.courseOpen[i] >= 0 && S.courseOpen[i] <= t) ci = i;
   return COURSES[ci].y0;
 }
-const roomAt = (id) => { const el = ELEMENTS.find((e) => e.id === id); return new THREE.Vector3(el.label[0], el.label[1] - 3, el.label[2]); };
+// a little below a room's X-ray label (null if there is no such room, and its stop is skipped)
+const roomAt = (id) => { const el = ELEMENTS.find((e) => e.id === id); return el?.label ? new THREE.Vector3(el.label[0], el.label[1] - 3, el.label[2]) : null; };
 
 // The stops for a finished run (summary from the worker) and its ramp theory. A stop whose
-// milestone is missing is left out.
+// milestone is missing is left out (for the spiral's stand-in too): each stop is only built
+// from a milestone that exists.
 export function tourStops(S, theoryId = 'straight-zigzag') {
   const R = DEFAULTS.ramp, find = (label) => S.milestones.find((m) => m.label === label);
   const span = APPROACH + HOLD; // working seconds played at 1× in a stop
   const stops = [];
-  const add = (m, s) => { if (m) stops.push({ milestone: m.label, ...s }); };
+  const add = (m, make) => { if (!m) return; const s = make(m); if (s && Number.isFinite(s.t) && (s.kind !== 'room' || s.room)) stops.push({ milestone: m.label, ...s }); };
   const first = find('First course complete');
-  add(first, {
-    kind: 'gang', t: first?.t, angle: 0.75, xray: false,
+  add(first, (m) => ({
+    kind: 'gang', t: m.t, angle: 0.75, xray: false,
     title: (t) => `Year ${yearOf(t)}: the first course`,
-    sub: (t) => `Gangs of ${DEFAULTS.haul.crew} drag each block on a sled from the quarry south of the plateau, along a wetted track. Course 1 was finished on working day ${fmt(dayOf(first.t))}; the second is under way.`,
-  });
+    sub: (t) => `Gangs of ${DEFAULTS.haul.crew} drag each block on a sled from the quarry south of the plateau, along a wetted track. Course 1 was finished on working day ${fmt(dayOf(m.t))}; the second is under way.`,
+  }));
   const queen = find("Queen's Chamber roofed");
   // a room stop starts a little before its milestone, so the roof is finished while it plays
-  add(queen, {
-    kind: 'room', t: queen && queen.t - span + 1, room: roomAt('queen'), angle: 2.3, xray: true,
+  add(queen, (m) => ({
+    kind: 'room', t: m.t - span + 1, room: roomAt('queen'), angle: 2.3, xray: true,
     title: (t) => `Year ${yearOf(t)}: the Queen's Chamber roofed`,
     sub: (t) => `The chamber is roofed as the courses rise round it; the masonry stands ${topAt(S, t).toFixed(0)} m high. Seen in X-ray.`,
-  });
+  }));
   // the ramp stop comes a few courses after the switch, once the new ramp has some length
   // and gangs are on it (minY: watch a gang above this height)
   const sw = S.milestones.find((m) => m.kind === 'ramp');
-  const after = (y) => { const ci = COURSES.findIndex((c) => c.y0 >= y); return ci >= 0 && S.courseOpen[ci] >= 0 ? S.courseOpen[ci] : sw?.t; };
+  const after = (y) => { const ci = COURSES.findIndex((c) => c.y0 >= y); return ci >= 0 && S.courseOpen[ci] >= 0 ? S.courseOpen[ci] : sw.t; };
   if (sw && theoryId === 'internal') {
-    add(sw, {
+    add(sw, () => ({
       kind: 'gang', t: after(R.switchY + 4), angle: 3.6, xray: true, minY: R.switchY + 0.5,
       title: (t) => `Year ${yearOf(t)}: into the internal ramp`,
       sub: () => `Above ${R.switchY} m the straight ramps are given up. Sleds climb a gallery inside the masonry, ${R.internal.inset} m in from the face at 1 in ${Math.round(1 / R.internal.grade)}, and are turned with levers at each corner. Seen in X-ray.`,
-    });
+    }));
   } else if (sw) {
-    add(sw, {
+    add(sw, () => ({
       kind: 'gang', t: after(R.switchY + 6), angle: 0.4, xray: false, minY: R.switchY + 0.5,
       title: (t) => `Year ${yearOf(t)}: the zigzags begin`,
       sub: () => `At ${R.switchY} m the straight ramps stopped growing. Sleds still climb them, then turn onto a single-lane zigzag up the face at 1 in ${Math.round(1 / R.zigzag.grade)}, pausing at every switchback.`,
-    });
+    }));
   } else {
     // no switch (the spiral): the ledges halfway up instead
     const half = find('Half the height reached');
-    add(half, {
-      kind: 'gang', t: half?.t, angle: 0.4, xray: false, minY: HEIGHT / 4,
+    add(half, (m) => ({
+      kind: 'gang', t: m.t, angle: 0.4, xray: false, minY: HEIGHT / 4,
       title: (t) => `Year ${yearOf(t)}: halfway up the spiral`,
       sub: () => `Four ledges wind up round the faces, one from each corner, at 1 in ${Math.round(1 / R.spiral.grade)}. A sled is turned round the edge of the pyramid at every corner.`,
-    });
+    }));
   }
   const king = find("King's Chamber roofed");
-  add(king, {
-    kind: 'room', t: king && king.t - span + 1, room: roomAt('king'), angle: 5.2, xray: true,
+  add(king, (m) => ({
+    kind: 'room', t: m.t - span + 1, room: roomAt('king'), angle: 5.2, xray: true,
     title: (t) => `Year ${yearOf(t)}: the King's Chamber roofed`,
     sub: (t) => `Nine granite beams from Aswan, each dragged up by a heavy gang of ${DEFAULTS.heavy.crew} and levered across the chamber. The masonry stands ${topAt(S, t).toFixed(0)} m high. Seen in X-ray.`,
-  });
+  }));
   const cap = find('Capstone set');
-  add(cap, {
+  add(cap, (m) => ({
     // (it ends just before the set: once the capstone is on, the build is done and the gangs
     // go home, and the gangs' drawing does not follow that moment smoothly)
-    kind: 'capstone', t: cap && cap.t - span - 0.5, angle: 1.2, xray: false,
+    kind: 'capstone', t: m.t - span - 0.5, angle: 1.2, xray: false,
     title: (t) => `Year ${yearOf(t)}: the capstone set`,
     sub: () => `A heavy gang of ${DEFAULTS.heavy.crew} levers the capstone into place, ${HEIGHT} m above the plateau.`,
-  });
+  }));
   return stops.filter((s) => s.t >= 0).sort((a, b) => a.t - b.t);
 }
 
