@@ -523,8 +523,9 @@ window.__khufu = {
     timeline.setPlaying(was);
     return { speed, steps, replies, worst, jumps, gangsInDetail: bubble.inside.size, workers: bubble.info.workers };
   },
-  setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES,
+  setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES, SLED, FIG,
   get tour() { return tour; }, startTour, endTour,
+  hold: false, // true: the frame loop stops drawing (a test drives the frames)
   view: (x, y, z, tx, ty, tz) => { camera.position.set(x, y, z); orbit.target.set(tx, ty, tz); orbit.update(); },
   // run `seconds` of frames and report the frame rate (requestAnimationFrame timing)
   measure: (seconds = 3) => new Promise((res) => {
@@ -540,6 +541,8 @@ window.__khufu = {
 
 let hudT = 0;
 function frame() {
+  // a test (tests/e2e) that drives frames itself sets __khufu.hold, so this loop stands aside
+  if (window.__khufu.hold) { clock.getDelta(); requestAnimationFrame(frame); return; }
   const dt = Math.min(clock.getDelta(), 0.1);
   if (tour.active) tour.update(dt); else timeline.tick(dt);
   if (timeline.ready && bubble.visible && !(tour.active && tour.drewBubble)) bubble.update(timeline.t, camera, dt);

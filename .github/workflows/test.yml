@@ -1,0 +1,63 @@
+# The test suite (Phase 8): runs on every pull request and on pushes to main.
+#   model:   unit tests of the event model, then the khufu:* check scripts
+#   browser: Playwright in headless Chromium (software WebGL) against the production build
+name: Tests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  model:
+    name: Event model (unit tests and checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:unit
+      - run: npm run khufu:check
+      - run: npm run khufu:seek
+      - run: npm run khufu:gangs
+      - run: npm run khufu:works
+      - run: npm run khufu:theories
+
+  browser:
+    name: Browser (pages, timeline, tours, walking, rendering, bubble)
+    # Playwright 1.52 (whose Chromium made the reference pictures) installs on 24.04, not on
+    # 26.04 (ubuntu-latest since November 2026)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npx playwright test
+        env:
+          CI: '1'
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14

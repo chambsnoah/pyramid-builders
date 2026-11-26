@@ -11,7 +11,7 @@ import * as PLAN from './plan.js';
 import * as NAV from './nav.js';
 import { B, N, HALF, LAYERS, cx, cz, edgeX, edgeZ, rockCells, blocks, getRock, getBlock, STAIR_PIECES } from './plan.js';
 import { v3 } from './core.js';
-import { Tour, TOUR_LENGTH, drawOverlay } from './tour.js';
+import { Tour, TOUR_LENGTH, SHOTS, drawOverlay } from './tour.js';
 
 buildTextures(); buildMaterials(); buildGeometries();
 
@@ -415,7 +415,7 @@ function frame() {
   if (recording) { requestAnimationFrame(frame); return; } // the recorder drives frames itself
   let simDt = 0;
   if (tour) {
-    tour.t += real;
+    tour.t += real * window.__tour.speed;
     const ov = tour.apply(tour.t, real);
     showCaption(ov);
     drawWorld(ov.simDt, real);
@@ -466,6 +466,8 @@ const tourApp = {
     lookFrame = 0; updateLook();
   },
 };
+// for tests (tests/e2e): the tour's progress, and `speed` to play it faster than real time
+window.__tour = { speed: 1, get active() { return !!tour; }, get t() { return tour ? tour.t : null; }, get shot() { return tour ? tour.shot : null; }, length: TOUR_LENGTH, shots: SHOTS.length };
 function startTour() {
   tour = new Tour(tourApp); tour.t = 0;
   document.body.classList.add('touring');
