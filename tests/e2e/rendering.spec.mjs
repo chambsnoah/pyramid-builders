@@ -1,7 +1,7 @@
 // Rendering: fixed camera views on fixed days compared with stored reference pictures
 // (tests/e2e/__screenshots__), and frame-time budgets with the detail bubble full.
 //   npx playwright test rendering --update-snapshots   to refresh the references
-import { test, expect, openKhufu } from './fixtures.mjs';
+import { test, expect, sharedPage } from './fixtures.mjs';
 import { VIEWS, showView, HIDE_UI } from './view-helpers.mjs';
 
 // Frame times are generous: software WebGL takes 0.8–1 s a frame at 960×600 on an Apple M3
@@ -14,22 +14,18 @@ const BUDGET = {
 };
 
 test.describe.configure({ mode: 'serial' });
-let page;
-test.beforeAll(async ({ browser }) => {
-  page = await browser.newPage();
-  await openKhufu(page);
-  await page.addStyleTag({ content: HIDE_UI });
-});
-test.afterAll(async () => page?.close());
+const shared = sharedPage(test, { setup: (p) => p.addStyleTag({ content: HIDE_UI }) });
 
 for (const v of VIEWS) {
   test(`view: ${v.name}`, async () => {
+    const { page } = shared;
     await showView(page, v);
     await expect(page).toHaveScreenshot(`${v.name}.png`, { animations: 'disabled' });
   });
 }
 
 test('frame-time budget with the bubble full of gangs', async () => {
+  const { page } = shared;
   await showView(page, VIEWS.find((v) => v.name === 'quarry-gangs'));
   const r = await page.evaluate(() => __khufu.benchFrames(30, 1));
   console.log(`frame ${JSON.stringify(r.frameMs)} ms, placing ${JSON.stringify(r.placeMs)} ms, ${r.bubble.near} gangs / ${r.bubble.workers} workers in detail, ${r.tris} tris, ${r.calls} draw calls`);

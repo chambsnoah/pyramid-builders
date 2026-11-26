@@ -1,27 +1,26 @@
 // The detail bubble: every drawn sled and person is where the gang's token (its trip from
 // the event model) puts it, on either side of the bubble edge, after seeks, and while
 // playing (checkMotion: no jumps). The model side is checked by `npm run khufu:gangs`.
-import { test, expect, openKhufu, seekTo } from './fixtures.mjs';
+import { test, expect, seekTo, sharedPage } from './fixtures.mjs';
 import { VIEWS, showView, DAY } from './view-helpers.mjs';
 import { runFull } from '../../src/khufu/sim/index.js';
 import { seeker } from '../../src/khufu/sim/view.js';
 import { gangTracker, figures, crewSpec, SLED, FIG } from '../../src/khufu/sim/gangs.js';
 
 test.describe.configure({ mode: 'serial' });
-let page, at;
-test.beforeAll(async ({ browser }) => {
-  page = await browser.newPage();
-  await openKhufu(page);
-  at = seeker(runFull({ seed: 1 }));
-});
-test.afterAll(async () => page?.close());
+const shared = sharedPage(test);
+let at;
+test.beforeAll(() => { at = seeker(runFull({ seed: 1 })); });
 
-// what the page draws for every gang now: its token (sled), the articulated workers of the
-// gangs in the bubble and the simple figures of the others
-const drawn = () => page.evaluate(() => {
+// what the page draws for every gang now: its token (the sled's instance matrix), the
+// articulated workers of the gangs in the bubble and the simple figures of the others
+const drawn = () => shared.page.evaluate(() => {
   const K = __khufu, B = K.bubble, { SLED, FIG } = K, M = new K.THREE.Matrix4(), V = new K.THREE.Vector3();
   const tokens = {}, people = {}, far = [];
-  B.trips.forEach((trip, g) => { if (trip && !trip.away) tokens[g] = Array.from(B.bufs[g].slice(0, 3)); });
+  // the sleds are instanced in gang order, skipping gangs off site (Bubble.update)
+  let ns = 0;
+  B.trips.forEach((trip, g) => { if (trip && !trip.away) { B.sleds.getMatrixAt(ns++, M); V.setFromMatrixPosition(M); tokens[g] = [V.x, V.y, V.z]; } });
+  if (ns !== B.sleds.count) tokens.countMismatch = [ns, B.sleds.count];
   const W = B.crowd ? B.crowd.workers : [];
   let k = 0;
   for (const g of [...B.inside].sort((a, b) => a - b)) {
@@ -50,12 +49,13 @@ const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 const V = Object.fromEntries(VIEWS.map((v) => [v.name, v]));
 for (const v of [V['quarry-gangs'], V['zigzag-gangs']]) {
   test(`tokens and workers match the model, inside and outside the bubble (${v.name})`, async () => {
+    const { page } = shared;
     const t = await showView(page, v);
     const want = model(t), got = await drawn();
     const gangs = Object.keys(want);
     expect(gangs.length).toBeGreaterThan(40);
     expect(Object.keys(got.tokens).sort()).toEqual(gangs.sort());
-    for (const g of gangs) expect(dist(got.tokens[g], want[g].sled), `gang ${g} sled`).toBeLessThan(1e-3);
+    for (const g of gangs) expect(dist(got.tokens[g], want[g].sled), `gang ${g}: the drawn sled`).toBeLessThan(1e-3);
     expect(got.inside.length).toBeGreaterThan(1);
     for (const g of got.inside) got.people[g].forEach((p, j) => expect(dist(p, want[g].people[j]), `gang ${g} worker ${j} (articulated)`).toBeLessThan(1e-3));
     // move back until a gang in the bubble leaves it: its people are now simple figures, at the same places
@@ -76,6 +76,7 @@ for (const v of [V['quarry-gangs'], V['zigzag-gangs']]) {
 }
 
 test('after seeking away and back, every gang is drawn where it was', async () => {
+  const { page } = shared;
   const t = await showView(page, V['quarry-gangs']);
   const before = await drawn();
   await page.evaluate(() => { __khufu.hold = false; });
@@ -93,6 +94,7 @@ test('after seeking away and back, every gang is drawn where it was', async () =
 // its gang's return path jumps then, a known gap hidden in the page.)
 for (const [v, speed] of [[V['quarry-gangs'], 1], [V['zigzag-gangs'], 1], [V['zigzag-gangs'], 4]]) {
   test(`no jumps while playing at ${speed}× (${v.name})`, async () => {
+    const { page } = shared;
     await showView(page, v); // (frames held: checkMotion places the gangs itself, so no time goes on drawing)
     const r = await page.evaluate((speed) => __khufu.checkMotion({ speed, seconds: 4, step: 0.05 }), speed);
     console.log(JSON.stringify(r));

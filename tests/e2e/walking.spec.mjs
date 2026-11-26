@@ -1,23 +1,19 @@
 // Walking: from each walk spot (the "Walk to" buttons) into every room of the finished
 // pyramid, with the real walker, pressing Space at the climb prompts (the checks done by
 // hand for #6).
-import { test, expect, openKhufu } from './fixtures.mjs';
+import { test, expect, sharedPage } from './fixtures.mjs';
 import { NODES, SPOT_NODE, ROOM_NODE, route, walkInPage } from './walk-helpers.mjs';
 
 const SPOT_KEYS = Object.keys(SPOT_NODE);
 const ROOMS = Object.keys(ROOM_NODE);
 
 
-let page;
-test.beforeAll(async ({ browser }) => {
-  page = await browser.newPage();
-  await openKhufu(page, '?nolock');
-  await page.evaluate(() => { __khufu.hold = true; }); // the test drives the walker's frames
-});
-test.afterAll(async () => page?.close());
+// the test drives the walker's frames
+const shared = sharedPage(test, { query: '?nolock', setup: (p) => p.evaluate(() => { __khufu.hold = true; }) });
 
 for (const [si, spot] of SPOT_KEYS.entries()) {
   test(`from the ${spot} spot into every room`, async () => {
+    const { page } = shared;
     const report = [];
     for (const roomId of ROOMS) {
       await page.locator('#rooms button').nth(si).click(); // walk to the spot
