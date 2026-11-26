@@ -5,12 +5,15 @@ import { test, expect, openKhufu } from './fixtures.mjs';
 test("the small pyramid's tour plays every shot and hands back the controls", async ({ page }) => {
   await page.goto('/index.html?tour=1');
   await page.waitForFunction(() => window.__tour?.active);
-  const { shots, length } = await page.evaluate(() => { __tour.speed = 4; return { shots: __tour.shots, length: __tour.length }; });
-  // poll the shot shown until the tour ends
+  test.setTimeout(480_000); // software WebGL on a CI runner draws only a few frames a second
+  const { shots, length } = await page.evaluate(() => { __tour.speed = 8; return { shots: __tour.shots, length: __tour.length }; });
+  // poll the shot shown until the tour ends; fail only if it stops moving on for 30 s
   const seen = new Set(), captions = new Set();
-  for (const deadline = Date.now() + 200_000; Date.now() < deadline;) {
-    const s = await page.evaluate(() => ({ active: __tour.active, shot: __tour.shot, title: document.querySelector('#tourTitle').textContent }));
+  let lastT = -1, stalled = Date.now();
+  while (Date.now() - stalled < 30_000) {
+    const s = await page.evaluate(() => ({ active: __tour.active, t: __tour.t, shot: __tour.shot, title: document.querySelector('#tourTitle').textContent }));
     if (!s.active) break;
+    if (s.t > lastT) { lastT = s.t; stalled = Date.now(); }
     seen.add(s.shot); captions.add(s.title);
     await page.waitForTimeout(100);
   }
