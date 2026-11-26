@@ -37,7 +37,9 @@ jobs:
 
   browser:
     name: Browser (pages, timeline, tours, walking, rendering, bubble)
-    runs-on: ubuntu-latest
+    # Playwright 1.52 (whose Chromium made the reference pictures) installs on 24.04, not on
+    # 26.04 (ubuntu-latest since November 2026)
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
