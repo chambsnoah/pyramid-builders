@@ -20,7 +20,6 @@ const drawn = () => shared.page.evaluate(() => {
   // the sleds are instanced in gang order, skipping gangs off site (Bubble.update)
   let ns = 0;
   B.trips.forEach((trip, g) => { if (trip && !trip.away) { B.sleds.getMatrixAt(ns++, M); V.setFromMatrixPosition(M); tokens[g] = [V.x, V.y, V.z]; } });
-  if (ns !== B.sleds.count) tokens.countMismatch = [ns, B.sleds.count];
   const W = B.crowd ? B.crowd.workers : [];
   let k = 0;
   for (const g of [...B.inside].sort((a, b) => a - b)) {
@@ -29,7 +28,7 @@ const drawn = () => shared.page.evaluate(() => {
     for (let j = 0; j < n; j++, k++) people[g].push([W[k].pos.x, W[k].pos.y, W[k].pos.z]);
   }
   for (let i = 0; i < B.far.count; i++) { B.far.getMatrixAt(i, M); V.setFromMatrixPosition(M); far.push([V.x, V.y, V.z]); }
-  return { tokens, people, far, inside: [...B.inside], cam: K.camera.position.toArray() };
+  return { tokens, sleds: { gangs: ns, drawn: B.sleds.count }, people, far, inside: [...B.inside], cam: K.camera.position.toArray() };
 });
 // the same gangs from the model run here in Node
 function model(t) {
@@ -55,6 +54,7 @@ for (const v of [V['quarry-gangs'], V['zigzag-gangs']]) {
     const gangs = Object.keys(want);
     expect(gangs.length).toBeGreaterThan(40);
     expect(Object.keys(got.tokens).sort()).toEqual(gangs.sort());
+    expect(got.sleds.drawn, 'one sled instance drawn for each gang on site').toBe(got.sleds.gangs);
     for (const g of gangs) expect(dist(got.tokens[g], want[g].sled), `gang ${g}: the drawn sled`).toBeLessThan(1e-3);
     expect(got.inside.length).toBeGreaterThan(1);
     for (const g of got.inside) got.people[g].forEach((p, j) => expect(dist(p, want[g].people[j]), `gang ${g} worker ${j} (articulated)`).toBeLessThan(1e-3));
