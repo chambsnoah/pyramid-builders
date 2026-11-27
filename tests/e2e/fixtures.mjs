@@ -47,8 +47,9 @@ export async function openKhufu(page, query = '') {
 }
 
 // seek the timeline to t (working seconds) as the scrub bar does, and wait for the model's
-// state at exactly that time
+// state at exactly that time (past the capstone, while the access stair is built, the
+// model's state stays at the end of the build)
 export async function seekTo(page, t) {
   await page.evaluate((t) => { __khufu.timeline.seek(t); }, t);
-  await page.waitForFunction((t) => __khufu.state && __khufu.state.t === t && !__khufu.client.busy, t);
+  await page.waitForFunction((t) => __khufu.state && __khufu.state.t === Math.min(t, __khufu.summary.endT) && !__khufu.client.busy, t);
 }

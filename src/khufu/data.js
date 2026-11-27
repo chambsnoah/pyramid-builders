@@ -278,10 +278,19 @@ export const ELEMENTS = [
 ];
 
 // Steps up the north face to the entrance. The casing was smooth, so the model adds a
-// stair for access: not historical.
+// stair for access: not historical. It is built after the capstone, once the ramps are
+// down, in layers at the pyramid's course heights (stairAt in sim/works.js).
 export const STAIR = { x0: AXIS_X - 1.05, x1: AXIS_X + 1.05, landing: 1.6, deg: 35, rise: 0.25 };
 STAIR.zTop = ENTRANCE_Z - STAIR.landing;
 STAIR.zFoot = STAIR.zTop - ENTRANCE_Y / Math.tan(STAIR.deg * D);
+// the stair as columns from the ground: [z from, z to, height of its tread], foot to landing
+STAIR.n = Math.round(ENTRANCE_Y / STAIR.rise);
+STAIR.columns = (() => {
+  const n = STAIR.n, rise = ENTRANCE_Y / n, run = (STAIR.zTop - STAIR.zFoot) / n, out = [];
+  for (let k = 0; k < n; k++) out.push([STAIR.zFoot + k * run, STAIR.zFoot + (k + 1) * run, (k + 1) * rise]);
+  out.push([STAIR.zTop, ENTRANCE_Z + 0.02, ENTRANCE_Y]); // landing at the sill
+  return out;
+})();
 const STAIR_TAN = Math.tan(STAIR.deg * D), STAIR_RAIL = 1.0; // invisible rail height above the steps
 export const STAIR_SOLIDS = [
   // collision: a smooth ramp under the steps and the landing in front of the entrance

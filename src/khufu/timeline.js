@@ -132,7 +132,7 @@ export class Timeline {
   // the finished run: length of the build and its milestones
   setRun(summary) {
     this.summary = summary;
-    this.end = summary.endT;
+    this.end = summary.finishT ?? summary.endT; // (on past the capstone until the access stair is built)
     this.ready = true;
     const E = this.el;
     E.scrub.max = String(Math.ceil(this.end / DAY)); E.scrub.step = '1';

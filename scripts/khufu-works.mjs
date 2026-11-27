@@ -12,11 +12,14 @@
 // 3. The tunnelling rate the schedule implies is plausible for copper tools in limestone.
 // 4. Where the plugs rest: inside the gallery's central channel while stored, filling the
 //    lower end of the ascending passage at the end.
+// 5. The access stair: not there while the pyramid (and its ramps) are being built, then
+//    built after the capstone in layers at the course heights, and finished at the end of
+//    the timeline.
 import { runFull, DAY, YEAR, ELEM, tagOf } from '../src/khufu/sim/index.js';
 import { runSummary } from '../src/khufu/sim/view.js';
-import { worksSchedule, tunnelAt, diggersAt, plugsAt, MAX_DIGGERS, DIG, FIGURE, FIG_S, PLUGS, PLUG_SIZE } from '../src/khufu/sim/works.js';
+import { worksSchedule, tunnelAt, diggersAt, plugsAt, stairAt, STAIR_LAYERS, MAX_DIGGERS, DIG, FIGURE, FIG_S, PLUGS, PLUG_SIZE } from '../src/khufu/sim/works.js';
 import * as THREE from 'three';
-import { COURSES, ELEMENTS, LEVELS, floorY, ceilY } from '../src/khufu/data.js';
+import { COURSES, ELEMENTS, LEVELS, ENTRANCE_Y, floorY, ceilY } from '../src/khufu/data.js';
 
 let failed = 0;
 const check = (ok, msg) => { console.log(`${ok ? 'ok  ' : 'FAIL'} ${msg}`); if (!ok) failed++; };
@@ -56,7 +59,7 @@ before(T['plugs-stored'], T['gallery-roof-over-plugs'], 'the plugs are lowered i
 before(T.antechamber, T.king, "the antechamber's granite is set before the King's Chamber is roofed");
 before(T.queen, T['queen-shafts'], "the Queen's Chamber shafts are finished after the chamber");
 before(T.king, T['king-shafts'], "the King's Chamber shafts are finished after the chamber");
-const others = W.order.filter((w) => w.id !== 'plugged' && w.id !== 'pyramidion').map((w) => w.t);
+const others = W.order.filter((w) => w.id !== 'plugged' && w.id !== 'pyramidion' && w.id !== 'stair').map((w) => w.t);
 before(Math.max(...others), W.plugs.slide[0][0], 'the plugs are slid down after every other room is finished');
 before(T.plugged, T.pyramidion, 'the ascending passage is plugged before the end of the build');
 check(sum.milestones.some((m) => m.label === 'Subterranean chamber left unfinished') && sum.milestones.some((m) => m.label === 'Ascending passage plugged'), 'the milestones include the tunnel and the plugs');
@@ -174,6 +177,21 @@ plugsAt(W, sum.endT, pbuf);
 check(PLUGS.every((_, k) => plugFits(asc, k, 'at the end')), 'at the end the plugs lie whole inside the lower end of the ascending passage, on its floor');
 const low = pbuf[2] + (PLUG_SIZE[1] / 2) * Math.sin(pbuf[3]) - (PLUGS[0].len / 2) * Math.cos(pbuf[3]); // its bottom edge, on the floor
 check(Math.abs(low - LEVELS.ascendingStartZ) < 0.2, `the lowest plug's lower end is at the bottom of the ascending passage (z ${low.toFixed(2)} vs ${LEVELS.ascendingStartZ.toFixed(2)})`);
+
+// ---- 5. the access stair -----------------------------------------------------------------
+const st = W.stair, stairDays = (st.t1 - st.t0) / DAY;
+console.log(`  access stair: ${STAIR_LAYERS.length} layers over ${stairDays.toFixed(1)} working days, ${day(st.t0)} to ${day(st.t1)}`);
+check(st.t0 === sum.endT && sum.finishT === st.t1, 'the stair is begun when the capstone is set, and the timeline ends when it is finished');
+check([0, sum.endT / 2, sum.endT - 1, sum.endT].every((t) => stairAt(W, t) === 0), 'no stair stands while the pyramid and its ramps are being built');
+check(stairAt(W, st.t1) === ENTRANCE_Y, `finished, the stair reaches the entrance (${stairAt(W, st.t1).toFixed(2)} m)`);
+check(STAIR_LAYERS.every(([y], i) => i === STAIR_LAYERS.length - 1 ? y === ENTRANCE_Y : Math.abs(y - COURSES[i].y1) < 1e-9), 'its layers are laid at the heights of the pyramid\'s courses');
+{ // it rises layer by layer, never down, a layer at a time
+  let prev = 0, ok = true, seen = 0;
+  for (let t = st.t0; t < st.t1 + 600; t += 600) { const y = stairAt(W, t); if (y < prev || (y > prev && STAIR_LAYERS.findIndex(([h]) => h === y) !== STAIR_LAYERS.findIndex(([h]) => h === prev) + 1)) ok = false; if (y !== prev) seen++; prev = y; }
+  check(ok && seen === STAIR_LAYERS.length, `it rises one layer at a time (${seen} layers seen in 10-minute steps)`);
+}
+check(stairDays > 10 && stairDays < 60, `it takes a crew ${stairDays.toFixed(0)} working days (10–60)`);
+check(sum.milestones.some((m) => m.label === 'Access stair built' && m.t === st.t1), 'the milestones include the access stair');
 void tagOf; void YEAR;
 
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');

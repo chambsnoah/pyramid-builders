@@ -4,6 +4,7 @@
 import { test, expect, openKhufu, seekTo } from './fixtures.mjs';
 import { runFull, DAY, MONTH_DAYS } from '../../src/khufu/sim/index.js';
 import { seeker, viewState } from '../../src/khufu/sim/view.js';
+import { STAIR, ENTRANCE_Y } from '../../src/khufu/data.js';
 
 const fmt = (n) => Math.round(n).toLocaleString('en-US');
 let at = null;
@@ -68,8 +69,41 @@ test('stepping by days and months, and the milestone marks', async ({ page }) =>
   const ms = await page.evaluate(() => __khufu.summary.milestones.map((m) => m.t));
   for (const i of [0, Math.floor(n / 2), n - 1]) {
     await marks.nth(i).dispatchEvent('click');
-    await page.waitForFunction((t) => __khufu.state.t === t, ms[i]);
+    await page.waitForFunction((t) => __khufu.state.t === Math.min(t, __khufu.summary.endT) && __khufu.timeline.t === t, ms[i]); // (the last: the access stair, after the build)
   }
+});
+
+// The access stair is built after the capstone, once the ramps are down: not there while
+// the pyramid is built, then layer by layer, drawn and walked on up to the height reached.
+test('the access stair is built after the capstone, and is walked on as far as it is built', async ({ page }) => {
+  const run = await openKhufu(page);
+  const S = await page.evaluate(() => ({ finishT: __khufu.summary.finishT, done: __khufu.summary.works.stair.done, max: +document.querySelector('#scrub').max }));
+  expect(S.finishT).toBeGreaterThan(run.endT + 10 * DAY);
+  expect(S.max, 'the scrub bar runs on to the finished stair').toBe(Math.ceil(S.finishT / DAY));
+  // on the stair's axis, a quarter of the way up its flight (out beyond the pyramid's foot);
+  // its tread there
+  const P = { x: (STAIR.x0 + STAIR.x1) / 2, z: STAIR.zFoot + (STAIR.zTop - STAIR.zFoot) / 4 };
+  const tread = STAIR.columns.find(([za, zb]) => P.z >= za && P.z < zb)[2];
+  // (the frame loop sets the stair from the timeline's time: wait for a frame at t to show y)
+  const look = (t, y) => page.waitForFunction(({ t, y }) => __khufu.timeline.t === t && !__khufu.client.busy && __khufu.monument.stairY === y, { t, y }).then(() => page.evaluate(({ x, z }) => {
+    const col = __khufu.collision.column(x, z), M = __khufu.monument;
+    return { shown: M.stair.visible, y: M.stairY, top: col[col.length - 1].y1 };
+  }, P));
+  // the default view (the end of the timeline): finished
+  let r = await look(S.finishT, ENTRANCE_Y);
+  expect(r).toEqual({ shown: true, y: ENTRANCE_Y, top: expect.closeTo(tread, 0) });
+  // while the pyramid is built, and the moment the capstone is set: no stair, the ground
+  for (const t of [run.endT - DAY, run.endT]) {
+    await seekTo(page, t);
+    r = await look(t, 0);
+    expect(r, `day ${(t / DAY).toFixed(1)}`).toEqual({ shown: false, y: 0, top: expect.closeTo(0, 0) });
+  }
+  // part-built: its third layer is up, cut off flat at its height, and walked on there
+  const [yMid, tMid] = S.done[2];
+  expect(yMid).toBeLessThan(tread);
+  await seekTo(page, tMid + 60);
+  r = await look(tMid + 60, yMid);
+  expect(r).toEqual({ shown: true, y: yMid, top: expect.closeTo(yMid, 3) });
 });
 
 test('playing moves the time on and the model with it; pausing stops it', async ({ page }) => {

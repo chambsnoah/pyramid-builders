@@ -145,7 +145,8 @@ for (const speed of [1, 4]) {
     const r = await page.evaluate((speed) => __khufu.checkMotion({ speed, seconds: 4, step: 0.05 }), speed);
     console.log(JSON.stringify(r));
     expect(t0).toBeLessThan(end);
-    expect(r.t, 'played up to the set').toBe(end);
+    expect(r.t, 'played across the set (the timeline runs on while the access stair is built)').toBeCloseTo(t0 + seconds * speed, 3);
+    expect(r.t).toBeGreaterThan(end);
     expect(r.inDetail, 'the capstone gang in the bubble after the set').toContain(capGang);
     expect(r.replies).toBeGreaterThan(20);
     expect(r.jumps, `worst ${JSON.stringify(r.worst)}`).toBe(0);

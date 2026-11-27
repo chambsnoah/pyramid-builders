@@ -92,7 +92,7 @@ export class StatsPanel {
     for (let m = 0; m < M.length; m++) (m ? g.lineTo : g.moveTo).call(g, x(m), y(M[m]));
     g.strokeStyle = gold; g.lineWidth = 2; g.lineJoin = 'round'; g.stroke();
     // now
-    const cx = (t / this.summary.endT) * (W - 1);
+    const cx = Math.min(1, t / this.summary.endT) * (W - 1); // (the timeline runs on past the build while the stair is built)
     g.strokeStyle = 'rgba(255,255,255,0.85)'; g.lineWidth = 1;
     g.beginPath(); g.moveTo(Math.round(cx) + 0.5, 0); g.lineTo(Math.round(cx) + 0.5, H); g.stroke();
     g.fillStyle = 'rgba(251,243,226,0.6)'; g.font = '10px ui-monospace, Menlo, monospace'; g.textBaseline = 'top';

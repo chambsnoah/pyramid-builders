@@ -219,6 +219,7 @@ export function milestones(run) {
   // the special works scheduled on top of the model (works.js)
   const W = worksSchedule(worksInput(run));
   for (const w of W.order) if (/^(subterranean-stop|plugs-stored|relieving-[1-4]|plugged)$/.test(w.id)) add(w.t, w.label, 'room');
+  add(W.stair.t1, 'Access stair built', 'course');
   // half the stone, from the per-day history
   const by = run.sim.hist.blocksByDay, half = S.blocksSet / 2;
   for (let d = 0, sum = 0; d < by.length; d++) { sum += by[d]; if (sum >= half) { add((d + 1) * DAY, 'Half the stone set', 'course'); break; } }
@@ -233,7 +234,7 @@ const worksInput = (run) => { const S = run.sim.state; return { courseOpen: S.co
 // The summary posted once the whole build has run.
 export function runSummary(run) {
   const S = run.sim.state, days = Math.ceil(S.t / DAY);
-  return {
+  const out = {
     endT: S.t, days, months: Math.ceil(S.t / MONTH), hash: run.sim.hash(), blocks: S.blocksSet, courses: LAST + 1,
     blocksByDay: run.sim.hist.blocksByDay.slice(0, days),
     courseOpen: S.courseOpen.slice(), courseDone: S.courseDone.slice(), elemDone: S.elemDone.slice(),
@@ -242,4 +243,7 @@ export function runSummary(run) {
     switchCi: run.sim.ctx.theory.switchCi, rampName: run.sim.ctx.theory.name, theory: theoryStats(run.sim),
     works: worksSchedule(worksInput(run)),
   };
+  // the timeline runs on past the capstone (endT) until the access stair is built
+  out.finishT = out.works.stair.t1;
+  return out;
 }
