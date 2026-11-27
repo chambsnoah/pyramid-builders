@@ -16,7 +16,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Crowd } from '../workers.js';
 import { buildTextures as buildAssetTextures, buildMaterials, buildGeometries } from '../assets.js';
-import { figures, crewSpec, ACT, POSE, SLED, FIG } from './sim/gangs.js';
+import { figures, crewSpec, courseSurface, ACT, POSE, SLED, FIG } from './sim/gangs.js';
 import { FACES } from './sim/ramps/straightZigzag.js';
 import { TAN } from './data.js';
 import { FIGURE } from './sim/works.js';
@@ -50,6 +50,7 @@ export class Bubble {
   constructor(scene) {
     this.scene = scene;
     this.trips = []; this.bufs = []; this.acts = [];
+    this.surf = null; this.surfSig = ''; // the course being laid, as gangs walk on it (setCourse)
     this.inside = new Set(); // gangs drawn as articulated workers
     this.crowd = null; // made on first use (it builds the small pyramid's textures)
     this.ramps = null; this.rampKey = null; this.visible = true;
@@ -77,7 +78,12 @@ export class Bubble {
       this.trips[trip.g] = trip;
     }
   }
-  reset() { this.trips = []; this.bufs = []; this.inside.clear(); this.rampKey = null; }
+  reset() { this.trips = []; this.bufs = []; this.inside.clear(); this.rampKey = null; this.surf = null; this.surfSig = ''; }
+  // the course being laid as drawn (WorkingCourse): people stand on its stones (courseSurface)
+  setCourse(layout, course) {
+    const sig = course && layout ? `${course.ci}:${course.gClaim.join(',')}:${course.tClaim.join(',')}:${course.heavyState.join('')}` : '';
+    if (sig !== this.surfSig) { this.surfSig = sig; this.surf = sig ? courseSurface(layout, course) : null; }
+  }
   setVisible(on) {
     this.visible = on;
     for (const m of [this.sleds, this.stones, this.far]) m.visible = on;
@@ -112,7 +118,9 @@ export class Bubble {
     if (r.Y > 0) for (let f = 0; f < 4; f++) {
       // stations from the inner end of the 1:1 drop to the foot, with the height at each
       const st = [[r.hr - r.Y, 0], [r.hr, r.Y], [r.hr + r.plat, r.Y], [r.F, 0]];
-      const sec = ([rr, a]) => [P(f, rr, -(r.w / 2 + a), -0.3), P(f, rr, -r.w / 2, a), P(f, rr, r.w / 2, a), P(f, rr, r.w / 2 + a, -0.3)];
+      // (the sides at 1:1 all the way down to the ground: each side between two stations is then
+      // one plane, with no crease where the landing on top meets the slope)
+      const sec = ([rr, a]) => [P(f, rr, -(r.w / 2 + a + 0.3), -0.3), P(f, rr, -r.w / 2, a), P(f, rr, r.w / 2, a), P(f, rr, r.w / 2 + a + 0.3, -0.3)];
       for (let i = 0; i < 3; i++) {
         const s0 = sec(st[i]), s1 = sec(st[i + 1]);
         for (let k = 0; k < 3; k++) quad(s0[k], s1[k], s1[k + 1], s0[k + 1]);
@@ -137,6 +145,17 @@ export class Bubble {
         const L2 = [dx / L, 0, dz / L];
         tri(ai, ao, ad, [-L2[0], 0, -L2[2]]);
         tri(bi, bo, bd, L2);
+        // inside the masonry: where its roof thins out near the top of the built courses, the
+        // gallery is a trench open to the sky (rampTrench() in sim/view.js), walled up to that top
+        if (inside && r.built > 0 && Math.max(a[1], b[1]) > r.built - r.clear && Math.min(a[1], b[1]) < r.built) {
+          const k = (y) => (b[1] - a[1] > 1e-9 ? Math.min(1, Math.max(0, (y - a[1]) / (b[1] - a[1]))) : 0);
+          const k0 = k(r.built - r.clear), k1 = k(r.built);
+          const at = (q, kk, off) => [q[0] + dx * kk + px * off, a[1] + (b[1] - a[1]) * kk, q[2] + dz * kk + pz * off];
+          for (const side of [-1, 1]) {
+            const f0 = at(a, k0, side * h), f1 = at(a, k1, side * h);
+            quad(f0, f1, [f1[0], r.built, f1[2]], [f0[0], r.built, f0[2]], [-side * px, 0, -side * pz]);
+          }
+        }
       }
     };
     if (r.zig) r.zig.forEach((p) => ledge(p, r.zw, false));
@@ -163,7 +182,7 @@ export class Bubble {
       const trip = this.trips[g];
       if (!trip || trip.away) continue; // (a levy gang off site)
       const o = this.bufs[g];
-      const tok = figures(trip, t, o);
+      const tok = figures(trip, t, o, 0, this.surf);
       this.acts[g] = tok.act;
       const L = trip.load;
       // sled and stone
@@ -256,6 +275,8 @@ export class Bubble {
         A.set(o[0] + fx * half + fz * spec.lat[j] * 0.5, o[1] + 0.25, o[2] + fz * half - fx * spec.lat[j] * 0.5);
         for (let r = 0; r < spec.ranks; r++) {
           const w = W[base + r * spec.files + j];
+          // (not to the front ranks that have stepped back beside the sled at the landing)
+          if ((w.pos.x - o[0]) * fx + (w.pos.z - o[2]) * fz < half) break;
           B.copy(w.handL).add(w.handR).multiplyScalar(0.5);
           this.crowd.segment('rope', A, B);
           A.copy(B);

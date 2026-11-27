@@ -93,9 +93,14 @@ function buildCourses(holes) {
 // With yBed (the bed of that course), also every room that reaches up into the course: a
 // chamber whose top lies just under the next course stays open from above until its roof
 // beams are set (the King's Chamber, the relieving chambers).
-export function capGeometry(y, yBed = y) {
+// extra: more openings [x0, x1, z0, z1] (the trench of a ramp inside the masonry).
+export function capGeometry(y, yBed = y, extra = []) {
   const hw = halfWidthAt(y);
   const rects = [];
+  for (const [x0, x1, z0, z1] of extra) {
+    const r = { x0: Math.max(-hw, x0), x1: Math.min(hw, x1), z0: Math.max(-hw, z0), z1: Math.min(hw, z1) };
+    if (r.x1 > r.x0 && r.z1 > r.z0) rects.push(r);
+  }
   for (const el of ELEMENTS) for (const v of el.voids) {
     // (a sloped void has a different section at each height: keep every one open)
     for (const yy of [y, (y + yBed) / 2, yBed + 0.01]) {
@@ -233,9 +238,22 @@ export class Monument {
     this.built = n; this.capstone = capstone;
     if (!changed) return this.topY();
     this.courses.geometry.setDrawRange(0, n > 0 ? this.ends[n - 1] : 0);
-    if (n > 0 && !this.complete) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1, COURSES[n - 1].y0); }
+    if (n > 0 && !this.complete) this.rebuildCap();
     this.updateVisibility();
     return this.topY();
+  }
+  rebuildCap() {
+    const n = this.built, y = COURSES[n - 1].y1;
+    this.cap.geometry.dispose();
+    this.cap.geometry = capGeometry(y, COURSES[n - 1].y0, this.holes && Math.abs(this.holes.y - y) < 1e-6 ? this.holes.rects : []);
+  }
+  // openings in the top of the built courses, when that top is at height y (the trench of a
+  // ramp inside the masonry where it comes up to the course being laid: rampTrench())
+  setHoles(y, rects) {
+    const sig = rects && rects.length ? `${y}:${rects.flat().map((v) => v.toFixed(2)).join(',')}` : '';
+    if (sig === (this.holesSig || '')) return;
+    this.holesSig = sig; this.holes = sig ? { y, rects } : null;
+    if (this.built > 0 && !this.complete) this.rebuildCap();
   }
   get complete() { return this.built === COURSE_COUNT && this.capstone; }
   topY() { return this.complete ? HEIGHT : this.built > 0 ? COURSES[this.built - 1].y1 : 0; }

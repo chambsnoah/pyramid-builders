@@ -8,6 +8,7 @@
 // up to gClaim[s] / tClaim[s] are being set (see courseLayout() and viewState() in sim/view.js).
 import * as THREE from 'three';
 import { ELEM, HV } from './sim/planner.js';
+import { rampOpening } from './sim/gangs.js';
 
 const CASING = 2, DRESSED = 3; // cell types from sim/planner.js
 const C = {
@@ -71,6 +72,7 @@ export class WorkingCourse {
     const run = (start, set, claim) => {
       for (let j = 0; j < claim; j++) {
         const i = cells[start + j], tp = type[start + j];
+        if (rampOpening(L, i)) continue; // (the way in from a ramp stays open until the course is done)
         put(-hw + ((i % n) + 0.5) * cell, -hw + (((i / n) | 0) + 0.5) * cell,
           j >= set ? C.setting : tp === CASING ? C.casing : tp === DRESSED ? C.dressed : C.core, i);
       }

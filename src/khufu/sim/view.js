@@ -8,6 +8,8 @@ import { ELEM, HV } from './planner.js';
 import { GIZA, TURA, HEAVY, LAST } from './model.js';
 import { worksSchedule } from './works.js';
 import { theoryStats } from './compare.js';
+import { courseSurface } from './gangs.js';
+import { FACES } from './ramps/straightZigzag.js';
 
 // Live state of a queue resource at time t (see resource.js): `pend` holds the service start
 // times of users not yet served, `nf` when each server comes free.
@@ -120,7 +122,50 @@ export function courseLayout(sim, ci) {
     const roof = h.kind === 'roof';
     heavy.set([h.x, h.z, h.granite ? 1 : 0, roof ? h.span + 1 : p.cell, h.axis === 'x' ? 0 : 1, h.elem, roof ? 1 : 0], HV * j);
   });
-  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, elem, heavy };
+  // where each ramp (or ledge) arrives at the edge of the course: the stones of the outer ring
+  // there are left open (see rampOpening() in gangs.js), [face, along the face, half width]
+  const R = sim.P.ramp, openings = [];
+  for (const rt of p.layout.routes) {
+    const [nrm, tan] = FACES[rt.face % 4], last = rt.segs[rt.segs.length - 1];
+    if (rt.head[0] * nrm[0] + rt.head[1] * nrm[1] < p.hw - p.cell) continue; // (an internal ramp comes up inside)
+    const half = last.kind === 'straight' ? R.straight.width / 2 : (R[last.kind]?.width ?? R.zigzag.width) / 2 + 1.5;
+    openings.push([rt.face % 4, rt.head[0] * tan[0] + rt.head[1] * tan[1], half]);
+  }
+  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, elem, heavy, openings, trench: rampTrench(sim, p.y0, p.y0 + p.h) };
+}
+
+// A ramp inside the masonry (the internal ramp) is a gallery with `clearance` m of masonry
+// over it, but where it comes up to the course being laid that roof thins out: from where its
+// floor is `clearance` below the top of the built courses (y0) up to the top of this course
+// (y1) it is drawn as a trench open to the sky. Its plan as rectangles [x0, x1, z0, z1]: the
+// top of the built courses is cut there (Monument.setHoles) and the stones of this course are
+// left out (rampOpening() in gangs.js), so gangs climbing it are not drawn in the masonry.
+export function rampTrench(sim, y0, y1) {
+  const th = sim.ctx.theory;
+  if (!th.ledgeInside || !(y1 > th.switchY)) return [];
+  const I = sim.P.ramp.internal, w = I.width / 2, lo = y0 - I.clearance, p = th.ledge(0, y1).pts, out = [];
+  for (let i = 3; i < p.length; i += 3) {
+    let ax = p[i - 3], ay = p[i - 2], az = p[i - 1], bx = p[i], by = p[i + 1], bz = p[i + 2];
+    if (Math.max(ay, by) <= lo) continue;
+    if (ay < lo) { const k = (lo - ay) / (by - ay); ax += (bx - ax) * k; az += (bz - az) * k; ay = lo; }
+    out.push([Math.min(ax, bx) - w, Math.max(ax, bx) + w, Math.min(az, bz) - w, Math.max(az, bz) + w]);
+  }
+  return out;
+}
+
+// The course being laid at the model's current time as gangs walk on it (courseSurface() in
+// gangs.js), from the same counts as viewState().course: for scripts and tests, which place
+// the figures as the page does.
+const surfaces = new WeakMap();
+export function courseSurfaceOf(sim) {
+  const S = sim.state, rt = !S.done && S.rt[S.cur];
+  if (!rt) return null;
+  const course = { ci: S.cur, gClaim: rt.gClaim, tClaim: rt.tClaim, heavyState: rt.heavyState };
+  const sig = `${S.cur}:${rt.gClaim.join(',')}:${rt.tClaim.join(',')}:${rt.heavyState.join('')}`;
+  let c = surfaces.get(sim);
+  if (!c || c.ci !== S.cur) surfaces.set(sim, (c = { ci: S.cur, L: courseLayout(sim, S.cur), sig: null, surf: null }));
+  if (c.sig !== sig) { c.sig = sig; c.surf = courseSurface(c.L, course); }
+  return c.surf;
 }
 
 // Milestones for the timeline, from the finished run: room completions (S.elemDone), course

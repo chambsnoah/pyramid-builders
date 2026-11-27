@@ -40,6 +40,7 @@ import { HALF, HEIGHT, TAN, COURSES, halfWidthAt, groundHeight } from '../data.j
 import { T, NT, TASK, GIZA, TURA, HEAVY, LAST } from './model.js';
 import { roadNetwork } from './roads.js';
 import { FACES } from './ramps/straightZigzag.js';
+import { HV } from './planner.js';
 
 // lane offsets (m to the left of travel) of the two lanes of a road or straight ramp
 const LANES = [1.4, 3.6];
@@ -246,19 +247,26 @@ const TA = [0, 0, 0], TB = [0, 0, 0];
 
 // ---- yards ------------------------------------------------------------------------------
 // Gangs wait in rows at the quarry (Giza sleds) and on the quay (Tura sleds and the heavy
-// gangs), each in its own spot, reached from the gate (the model's quarry / harbour point)
-// along an aisle, so the last stretch into every spot runs the same way whatever ramp the
-// gang came back from.
+// gangs), each in its own spot, facing away from the gate (the model's quarry / harbour
+// point). A spot is reached along the yard's avenue, straight out from the gate between the
+// two halves of every row, then along the cross-aisle in front of the row, and last straight
+// in from behind, so no gang walks through another parked in the yard. Rows are far enough
+// apart for a gang to pass between one row's front ranks and the next row's levermen.
 function yard(P, kind, i) {
   const q = kind === GIZA;
   const gate = q ? P.quarry.at : P.harbour.at;
   const d = q ? [0, 1] : [1, 0], l = [d[1], -d[0]];
-  const cols = q ? 10 : 6, dx = q ? 5 : 6, dz = q ? 14 : 34;
-  const col = i % cols, row = Math.floor(i / cols);
-  const f = 14 + row * dz, side = (col - (cols - 1) / 2) * dx;
-  const slot = [gate[0] + d[0] * f + l[0] * side, gate[1] + d[1] * f + l[1] * side];
-  const app = [slot[0] - d[0] * 8, slot[1] - d[1] * 8];
-  return { gate, slot, app };
+  // cols: spots per row (half on each side of the avenue); dx apart; rows dz apart; the
+  // cross-aisle `aisle` m behind each row's sleds (in the cross-aisles gangs keep YARD_LANE m left of
+  // the middle: one getting ready in its spot reaches out to 9.5 m in front of its sled)
+  const cols = q ? 16 : 6, dx = q ? 5 : 6, dz = q ? 28 : 50, aisle = q ? 13 : 14, avenue = 12; // (room to overtake: see passWindows)
+  const col = i % cols, row = Math.floor(i / cols), half = cols / 2;
+  const side = (col < half ? -1 : 1) * (avenue + (col % half) * dx);
+  const f = 14 + row * dz;
+  const at = (ff, ss) => [gate[0] + d[0] * ff + l[0] * ss, gate[1] + d[1] * ff + l[1] * ss];
+  const slot = at(f, side), app = at(f - aisle, side), cross = at(f - aisle, 0);
+  // from the spot to the gate (the road starts there)
+  return { gate, slot, app, way: [slot, app, cross] };
 }
 // index of gang g among the gangs waiting at the same yard
 function yardIndex(P, g, kind) {
@@ -289,7 +297,8 @@ function planner(sim) {
 function wayOut(sim, R, plan, c, route, src, y, end, via = null) {
   const B = new Builder(R);
   const road = src === 'q' ? plan.road.qPath[route] : plan.road.hPath[route];
-  if (y) B.start(y.slot[0], y.slot[1]).to(y.app[0], y.app[1]).to(road[0][0], road[0][1]);
+  let iCross = 0, iRoad = 0; // where the gang reaches the yard's avenue, and the gate
+  if (y) { B.start(y.way[0][0], y.way[0][1]); for (const [x, z] of y.way.slice(1)) B.to(x, z); iCross = B.n - 1; B.to(road[0][0], road[0][1]); iRoad = B.n - 1; }
   else B.start(road[0][0], road[0][1]);
   for (let i = 1; i < road.length; i++) B.to(road[i][0], road[i][1]);
   const iFoot = B.n - 1;
@@ -316,7 +325,7 @@ function wayOut(sim, R, plan, c, route, src, y, end, via = null) {
   B.to(end[0], end[1], bed);
   const line = new Line(B.done());
   const S = (i) => line.cum[i];
-  return { line, sFoot: S(iFoot), sSwitch: S(iSwitch), sHead: S(iHead), L: line.L, corners: corners.map(S) };
+  return { line, sCross: S(iCross), sRoad: S(iRoad), sFoot: S(iFoot), sSwitch: S(iSwitch), sHead: S(iHead), L: line.L, corners: corners.map(S) };
 }
 
 // the idle path: the last stretch into the yard spot
@@ -355,6 +364,8 @@ function loadOf(plan, kind, sector) {
 // the moment it arrives. Gangs keep to their own road lane there (two lines); heavy gangs,
 // which take the whole ramp, count in both.
 const QV = 0.5; // m/s moving up in a queue
+const YARD_LANE = 1.8; // m to the left of a yard's cross-aisle
+const TURN_STOP = 30; // s stopped at each switchback, at most
 const QGAP = 2.5; // m between two gangs in a queue
 function gangLength(kind, crew, load) {
   const spec = crewSpec(kind, crew), lead = (load ? load[2] / 2 : 0.7) + (kind === HEAVY ? 1.6 : 0.9);
@@ -371,7 +382,13 @@ function queueIndex(sim, plans) {
     const rt = plan.layout.routes[G.route[h]];
     const len = gangLength(kind, heavy ? P.heavy.crew : P.haul.crew, loadOf(plan, kind, G.sector[h]));
     const known = G.t[tb + T.FOOT] <= now;
-    add(foot, rt.segs[0].res, { h, at: G.t[tb + T.FOOT], out: known ? G.t[tb + T.CLIMB] : Infinity, len, line: heavy ? -1 : h % 2 });
+    // (counted until it has cleared the foot, gang and all, a little after it enters the lane:
+    // the one behind closes up behind it, not onto it)
+    const clear = (len + 14) / (P.haul.vLoaded * (heavy ? P.heavy.speedFactor : 1));
+    // (and counted from when it sets off, not only as it arrives: a queue for a single ramp lane,
+    // as for the internal ramp, can reach far back down the road, and the gangs on their way to
+    // it keep their places in it)
+    add(foot, rt.segs[0].res, { h, at: G.t[tb + T.FOOT], from: G.t[tb + T.DEPART], out: known ? G.t[tb + T.CLIMB] + clear : Infinity, len, line: heavy ? -1 : h % 2 });
     if (!known) continue;
     if (rt.segs.length > 1) add(zig, rt.segs[1].res, { h, at: G.t[tb + T.ARR1], serve: G.t[tb + T.ENT1], out: G.t[tb + T.ENT1], len });
     if (!heavy) add(land, `${c}:${G.sector[h]}:${G.berth[h]}`, { h, at: G.t[tb + T.LAND], serve: G.t[tb + T.UNLOAD], out: G.t[tb + T.DONE], len });
@@ -391,7 +408,9 @@ function capOf(Q, q, g, ahead, li, t0, t1, s, lo = -Infinity) {
     // kept even once its effect is over: the gang's own times (when it climbs, when it
     // unloads) are worked out from the whole list, so the list must not shrink under it
     const tau = e.len / QV;
-    h.push(e.len, e.at - tau, e.out, tau);
+    // (counted in over τ ending at its arrival, or from when it sets off if that is earlier,
+    // which is never before its trip is known)
+    h.push(e.len, Math.min(e.at - tau, e.from ?? Infinity), e.out, tau);
   }
   return h.length ? { li, t0, t1, s, h, lo } : null;
 }
@@ -425,7 +444,10 @@ function tripOf(sim, R, plans, g, Q) {
   const Li = new Line(idle).L;
   const K = [];
   const knot = (t, act, pa, sa, pb, sb) => K.push(t, act, pa, sa, pb, sb);
-  const base = { g, kind, crew, lane, yard: y };
+  // the ground the trip's paths were built on, so each man can stand on it where he is (see
+  // placeOn): the straight ramps and the top of the finished courses (see terrainY)
+  const ground = { Y: R.Y, hr: R.hr, F: R.F, plat: R.plat, w: R.w, built: R.built };
+  const base = { g, kind, crew, lane, yard: y, ground };
   if (task === TASK.WAITING || G.course[g] < 0) {
     knot(-1e15, ACT.IDLE, 0, Li, 0, Li);
     // a levy gang whose month is over is off site (not drawn)
@@ -448,7 +470,8 @@ function tripOf(sim, R, plans, g, Q) {
   const Lo = out.L, Lb = back.L;
 
   if (limestoneHeavy) {
-    const w = new Builder(R).start(y.slot[0], y.slot[1]).to(y.app[0], y.app[1]);
+    const w = new Builder(R).start(y.way[0][0], y.way[0][1]);
+    for (const [x, z] of y.way.slice(1)) w.to(x, z);
     for (const [x, z] of harbourToQuarry(P)) w.to(x, z);
     paths.push(w.done());
     const Lw = new Line(paths[3]).L, walkT = sim.ctx.hq / P.haul.vEmpty;
@@ -459,13 +482,22 @@ function tripOf(sim, R, plans, g, Q) {
     knot(-1e15, ACT.IDLE, 0, Li, 0, Li);
     knot(tt(T.START), ACT.LOAD, 0, Li, 1, 0);
   }
-  knot(tt(T.DEPART), ACT.HAUL, 1, 0, 1, out.sFoot);
+  // The yard is not in the model (its road starts at the gate): the gang walks out of it to the
+  // gate in the last part of its loading time, at its speed on the road (at least the last
+  // 80 % of the loading time), and sets off from the gate at the model's time.
+  const vRoad = (out.sFoot - out.sRoad) / Math.max(1, tt(T.FOOT) - tt(T.DEPART));
+  let leave = tt(T.DEPART); // when the gang leaves its spot (or the gate)
+  if (out.sRoad > 1e-6) {
+    leave = Math.max(tt(T.START) + 0.2 * (tt(T.DEPART) - tt(T.START)), tt(T.DEPART) - out.sRoad / vRoad);
+    knot(leave, ACT.HAUL, 1, 0, 1, out.sRoad);
+  }
+  knot(tt(T.DEPART), ACT.HAUL, 1, out.sRoad, 1, out.sFoot);
   // queues (see capOf): at the foot, and once the climb is known at the zigzag and the berth
   const rt = plan.layout.routes[route];
   const caps = [];
   const line = heavy ? -1 : g % 2;
   const footCap = capOf(Q, Q.foot.get(rt.segs[0].res), g, (e) => (e.at < tt(T.FOOT) || (e.at === tt(T.FOOT) && e.h < g)) && (line < 0 || e.line < 0 || e.line === line),
-    1, tt(T.DEPART), climbKnown ? tt(T.CLIMB) : Infinity, out.sFoot);
+    1, leave, climbKnown ? tt(T.CLIMB) : Infinity, out.sFoot, 0); // (a queue reaching back past the yard keeps the gang in its spot)
   if (footCap) caps.push(footCap);
   // where a queue holds the gang at time t (s: where it would be without it)
   const capAt = (cap, s, t) => (cap ? Math.min(s, capLim(cap, t)) : s);
@@ -484,7 +516,10 @@ function tripOf(sim, R, plans, g, Q) {
     const zig = rt.segs.length > 1;
     // [from s, to s, relative speed] for each stretch, and the switchbacks on the zigzag
     const run = (t0, t1, parts, pauseAll = 0, corners = []) => {
-      const nc = corners.length, pause = nc ? Math.min((t1 - t0) * 0.6, pauseAll) / nc : 0;
+      // (a short stop at each switchback: the rest of the model's turning time is spent climbing
+      // more slowly. The model lets the next gang onto the ramp a turning time behind, so a gang
+      // that stood the whole of it at a corner would have the next one walk into it there.)
+      const nc = corners.length, pause = nc ? Math.min(TURN_STOP, Math.min((t1 - t0) * 0.6, pauseAll) / nc) : 0;
       const w = parts.map(([a, b, v]) => Math.max(0, b - a) / v), W = w.reduce((x, y) => x + y, 0);
       const travel = Math.max(0, t1 - t0 - pause * nc);
       let t = t0;
@@ -527,10 +562,18 @@ function tripOf(sim, R, plans, g, Q) {
     // the gang would have to rush it. It may then reach the landing after the model's time,
     // never more than 30 % above the model's speed, and unload in what is left of the
     // unloading time: the moment it finishes (and everything after) stays the model's.
+    // The climb itself is timed by the model's moment at the top of the ramp (T.TOP), the
+    // stretch across the course by its landing time, so every gang on the same ramp climbs it
+    // as the model has it, in the model's order and spacing: the gang behind keeps behind.
     const vBase = H.vLoaded * (heavy ? P.heavy.speedFactor : 1) * 1.3;
-    const need = parts.reduce((a, [s0, s1, v]) => a + Math.max(0, s1 - s0) / (vBase * v), 0);
-    const arrive = Math.min(tt(T.DONE) - 1, Math.max(tt(T.LAND), t0 + need));
-    run(t0, arrive, parts, pauseAll, out.corners);
+    const need = (ps) => ps.reduce((a, [s0, s1, v]) => a + Math.max(0, s1 - s0) / (vBase * v), 0);
+    const up = parts.slice(0, -1), across = parts.slice(-1);
+    // (where the drawn way across the course is longer than the model's, the gang reaches the
+    // top sooner, never later than leaves it time to cross at that speed)
+    const arrive = Math.min(tt(T.DONE) - 1, Math.max(tt(T.LAND), t0 + need(up) + need(across)));
+    const top = Math.min(arrive, Math.max(t0 + need(up), Math.min(tt(T.TOP), arrive - need(across))));
+    run(t0, top, up, pauseAll, out.corners);
+    run(top, arrive, across);
     // the queue for its berth at the landing: it moves onto the berth once the gang there
     // has left (a little after the model's time, taken from its unloading time)
     let unload = Math.max(tt(T.UNLOAD), arrive);
@@ -562,21 +605,173 @@ function tripOf(sim, R, plans, g, Q) {
   // the two berths of a landing side by side: the gang ends its way out (and starts its way
   // back) beside the landing point, eased in over the last 30 m
   // (only past the foot, as the berth is known from the foot on, and only with room for it)
-  const berthLen = Math.min(30, Lo - (out.sFoot + 14));
+  // (on the course only: a ledge may meet the course at a hairpin just before the landing)
+  const berthLen = Math.min(30, Lo - (out.sFoot + 14), Math.max(4, Lo - out.sHead - 2));
   // (not where a theory's ledge ends close to the landing: the way in may double back there)
-  const berth = climbKnown && !heavy && berthLen >= 6 && !(ext && Lo - out.sHead < berthLen + ext) ? [BERTH[G.berth[g]], berthLen] : null;
+  const berth = climbKnown && !heavy && berthLen >= 4 && !(ext && Lo - out.sHead < berthLen + ext) ? [berthOffset(out.line, G.berth[g], kind, crew, loadOf(plan, kind, sector), COURSES[c].y0), berthLen] : null;
+  // how the gang moves along the stretches it shares with others (see passWindows), from its
+  // knots: out on the road from the yard's avenue to short of the ramp foot (by road lane),
+  // up the straight ramp (by the model's lane), and home from the top of the straight ramp to
+  // the avenue. Each piece: r(t) = r0 + v·(t − t0) for t0 ≤ t ≤ t1, kept to [lo, hi].
+  const mv = [];
+  if (!heavy) {
+    const spec = crewSpec(kind, crew), lead = (loadOf(plan, kind, sector)[2] / 2) + 0.9;
+    const front = lead + (spec.ranks - 1) * spec.gap + 0.3, rear = lead * 0.9 + 0.3, src = kind === GIZA ? 'q' : 'h';
+    const road = (src === 'q' ? plan.road.qPath : plan.road.hPath)[route];
+    const zigTop = rt.segs.length > 1 ? 20 : 0; // (the queue for the zigzag waits at the top)
+    // stretches: [path, key, s of r = 0, lo, hi] (r: metres from the gate along the road out, or
+    // to it on the way home; up the ramp, from its foot)
+    const stretch = task === TASK.OUT ? [
+      [1, `o${src}:${g % 2}`, out.sRoad, out.sCross - out.sRoad, out.sFoot - out.sRoad - 20, road, lane],
+      ...(climbKnown ? [[1, `r${route}:${G.lane[g]}`, out.sFoot, 14, out.sSwitch - out.sFoot - zigTop, null, LANES[G.lane[g]]]] : []),
+    ] : task === TASK.RETURNING && !limestoneHeavy ? [[2, `b${src}:${g % 2}`, Lb - out.sRoad, -(out.sSwitch - out.sRoad), out.sRoad - out.sCross, road, lane]] : [];
+    for (let i = 0; i + KN < K.length; i += KN) {
+      const act = K[i + 1], a = K[i], b = K[i + KN];
+      if ((act !== ACT.HAUL && act !== ACT.RETURN) || K[i + 2] !== K[i + 4] || b <= a || K[i + 5] <= K[i + 3]) continue;
+      const v = (K[i + 5] - K[i + 3]) / (b - a);
+      for (const [li, key, s0, lo, hi, rd, ln] of stretch) {
+        if (K[i + 2] !== li || K[i + 5] - s0 <= lo || K[i + 3] - s0 >= hi) continue; // (not on this stretch)
+        mv.push({ key, road: rd, t0: a, t1: b, r0: K[i + 3] - s0, v, lo, hi, front, rear, li, amt: SWING - ln });
+      }
+    }
+  }
   const sig = [task, G.trips[g], c, route, sector, R.key, climbKnown ? `${G.lane[g]}${G.berth[g]}` : '-', tt(T.START), tt(T.FOOT), climbKnown ? tt(T.TOP) : 0,
     task === TASK.RETURNING ? tt(T.HOME) : 0, ...caps.map((cp) => cp.h.join(','))].join('|');
   const load = loadOf(plan, kind, sector);
   // a roof beam's resting place on its two walls: centre and heading (see figures())
   const place = heavy && item.kind === 'roof' ? [item.x, COURSES[c].y0 + load[1] / 2, item.z, item.axis === 'x' ? Math.PI / 2 : 0] : null;
-  return { ...base, sig, paths, knots: Float64Array.from(K), load, course: c, narrow, rampLane, caps, berth, place };
+  // keep-left on a ledge: half its width less the gang's half width (the zigzag and the spiral
+  // ledges are 7 m wide: 1.6 m; the internal ramp, 3 m: the middle)
+  const th = sim.ctx.theory, lw = th.id === 'internal' ? P.ramp.internal.width : th.id === 'spiral' ? P.ramp.spiral.width : P.ramp.zigzag.width;
+  const keep = Math.max(0, Math.min(1.6, lw / 2 - gangHalfWidth(kind, crew, load)));
+  // the stretches of the way out and back on the course (see inward())
+  const onCourse = { 1: [out.sHead - 15, Lo + 15], 2: [-15, Lb - back.sHead + 15] };
+  // where the way out reaches the yard's avenue, and the way home leaves it (see laneAt)
+  const aisle = out.sCross > 0 ? { 1: out.sCross, 2: limestoneHeavy ? null : Lb - out.sCross } : null;
+  return { ...base, sig, paths, knots: Float64Array.from(K), load, course: c, narrow, rampLane, caps, berth, place, mv, keep, onCourse, aisle };
 }
 
 function reverse(p) {
   const n = p.length / 3, out = new Float32Array(p.length);
   for (let i = 0; i < n; i++) { out[3 * i] = p[3 * (n - 1 - i)]; out[3 * i + 1] = p[3 * (n - 1 - i) + 1]; out[3 * i + 2] = p[3 * (n - 1 - i) + 2]; }
   return out;
+}
+
+// How far a gang reaches to either side of its line (m): its outer files with the front ranks
+// folded back beside the sled at the end of the way out (see formation()), or the water
+// pourers beside the stone, plus a body.
+export function gangHalfWidth(kind, crew, load) {
+  const spec = crewSpec(kind, crew), lat = Math.max(...spec.lat.map(Math.abs));
+  return Math.max(lat + foldWidth(kind), load ? load[0] / 2 + 0.55 : 0.8) + 0.25;
+}
+// a body's width kept between a gang and the edge of the course it walks on
+const EDGE = 0.3;
+// The two berths of a landing side by side, to the left (+) and right (−) of the way in. On a
+// landing by the edge of the course one side may have no room: the pair then moves over (or
+// closes up) so that both gangs stand on the course.
+function berthOffset(line, k, kind, crew, load, bed) {
+  const p = line.p, n = p.length / 3;
+  let i = n - 2;
+  while (i > 0 && Math.hypot(p[3 * n - 3] - p[3 * i], p[3 * n - 1] - p[3 * i + 2]) < 1) i--;
+  const dx = p[3 * n - 3] - p[3 * i], dz = p[3 * n - 1] - p[3 * i + 2], d = Math.hypot(dx, dz) || 1;
+  const nl = [dz / d, -dx / d], at = [p[3 * n - 3], p[3 * n - 1]]; // left of travel, the landing
+  const W = gangHalfWidth(kind, crew, load), A = halfWidthAt(bed) - W - EDGE;
+  // how far the gang can stand to the left (hi) and to the right (−lo) and stay on the course
+  let lo = -Infinity, hi = Infinity;
+  for (let a = 0; a < 2; a++) {
+    if (Math.abs(nl[a]) < 1e-6) continue;
+    const u = (A - at[a]) / nl[a], v = (-A - at[a]) / nl[a];
+    lo = Math.max(lo, Math.min(u, v)); hi = Math.min(hi, Math.max(u, v));
+  }
+  if (hi - lo >= BERTH[0] - BERTH[1]) return BERTH[k] + (lo > BERTH[1] ? lo - BERTH[1] : hi < BERTH[0] ? hi - BERTH[0] : 0);
+  // closer than usual (on a course too small for two, both on the one spot)
+  if (hi < lo) return (lo + hi) / 2;
+  return k === 0 ? hi : lo;
+}
+
+// ---- overtaking ----------------------------------------------------------------------------
+// The model lets a faster gang catch up with a slower one on the road (every speed has its own
+// spread), and gangs leaving the yard at the same moment from different rows meet in its
+// avenue. Where two gangs in the same lane would come within a gang's length of each other,
+// the one that reached the shared stretch later steps out to an overtaking line (SWING m to
+// the left of the road's middle) for as long as they are side by side, and back after. The
+// times come from the model's own (the departure, the arrival at the foot; the walk home),
+// known once each gang sets off, so a gang's trip only ever learns of gangs ahead of it.
+const SWING = 5.8, SWING_STEP = 2.2, SWING_T = 5, PASS_GAP = 1;
+function passWindows(trips) {
+  const groups = new Map();
+  for (const tr of trips) {
+    tr.pass = null;
+    for (const m of tr.mv || []) { const a = groups.get(m.key); if (a) a.push([tr, m]); else groups.set(m.key, [[tr, m]]); }
+  }
+  const wins = [];
+  for (const list of groups.values()) {
+    // (only pieces at the same time can meet: sorted by start, each is compared with those
+    // that start before it ends)
+    list.sort((x, y) => x[1].t0 - y[1].t0);
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length && list[j][1].t0 < list[i][1].t1; j++) for (const [x, y] of [[i, j], [j, i]]) {
+      const [ta, A] = list[x], [tb, B] = list[y];
+      if (ta === tb) continue;
+      // (roads to different ramps share their way from the gate up to where they part, and
+      // gangs on them are side by side for a gang's length past it)
+      const common = A.road && B.road ? sharedRoad(A.road, B.road) + 12 : Infinity;
+      const lo = Math.max(A.lo, B.lo, A.li === 2 ? -common : -Infinity), hi = Math.min(A.hi, B.hi, A.li === 1 ? common : Infinity);
+      if (hi <= lo) continue;
+      // A steps out if it reaches the shared stretch later (ties: the higher gang number)
+      const eA = A.t0 + (lo - A.r0) / A.v, eB = B.t0 + (lo - B.r0) / B.v;
+      if (eA < eB || (eA === eB && ta.g < tb.g)) continue;
+      // both on the stretch (and in these pieces)
+      const c0 = Math.max(eA, eB, A.t0, B.t0), c1 = Math.min(A.t0 + (hi - A.r0) / A.v, B.t0 + (hi - B.r0) / B.v, A.t1, B.t1);
+      if (c1 <= c0) continue;
+      // A's place less B's: d(t) = d0 + k·(t − c0); too close while −(B.front + A.rear) < d < A.front + B.rear
+      const d0 = A.r0 + A.v * (c0 - A.t0) - (B.r0 + B.v * (c0 - B.t0)), k = A.v - B.v;
+      const a = -(B.front + A.rear + PASS_GAP), b = A.front + B.rear + PASS_GAP;
+      let w0 = c0, w1 = c1;
+      if (Math.abs(k) < 1e-9) { if (d0 <= a || d0 >= b) continue; }
+      else {
+        const t1 = c0 + (a - d0) / k, t2 = c0 + (b - d0) / k;
+        w0 = Math.max(c0, Math.min(t1, t2)); w1 = Math.min(c1, Math.max(t1, t2));
+        if (w1 <= w0) continue;
+      }
+      wins.push({ tr: ta, A, w0, w1, e: A.t0 + (A.lo - A.r0) / A.v });
+    }
+    // a gang passing one that has stepped out itself (to pass another) steps out one line
+    // farther (2.2 m): each window, in the order the gangs reached the stretch, goes one line
+    // beyond any earlier one at the same time within two gang lengths of it
+    wins.sort((x, y) => x.e - y.e || x.tr.g - y.tr.g);
+    for (let i = 0; i < wins.length; i++) {
+      const W = wins[i];
+      W.level = 1;
+      for (let j = 0; j < i; j++) {
+        const V = wins[j];
+        if (V.tr === W.tr || V.w1 <= W.w0 || V.w0 >= W.w1) continue;
+        const tm = (Math.max(V.w0, W.w0) + Math.min(V.w1, W.w1)) / 2;
+        const d = Math.abs(W.A.r0 + W.A.v * (tm - W.A.t0) - (V.A.r0 + V.A.v * (tm - V.A.t0)));
+        if (d < 2 * (W.A.front + W.A.rear)) W.level = Math.max(W.level, V.level + 1);
+      }
+      (W.tr.pass ||= []).push(W.w0, W.w1, W.A.li, W.A.amt + (W.level - 1) * SWING_STEP);
+    }
+    wins.length = 0;
+  }
+  for (const tr of trips) if (tr.pass) tr.sig += `|p${tr.pass.map((x) => x.toFixed(1)).join(',')}`;
+}
+// length of the road two routes share from the gate (all of it for the same road)
+function sharedRoad(a, b) {
+  if (a === b) return Infinity;
+  let L = 0;
+  for (let i = 1; i < Math.min(a.length, b.length); i++) {
+    if (Math.abs(a[i][0] - b[i][0]) > 1e-6 || Math.abs(a[i][1] - b[i][1]) > 1e-6) break;
+    L += Math.hypot(a[i][0] - a[i - 1][0], a[i][1] - a[i - 1][1]);
+  }
+  return L;
+}
+// how far gang `trip` has stepped out to overtake at time t on path li (0 when not overtaking)
+function swing(trip, li, t) {
+  const p = trip.pass;
+  if (!p) return 0;
+  let w = 0;
+  for (let i = 0; i < p.length; i += 4) if (p[i + 2] === li) w = Math.max(w, p[i + 3] * smooth((t - p[i] + SWING_T) / SWING_T) * (1 - smooth((t - p[i + 1]) / SWING_T)));
+  return w;
 }
 
 // Tracks what changed since the last call, so the worker only posts the trips that did.
@@ -592,8 +787,10 @@ export function gangTracker() {
       const out = { t: sim.state.t, trips: [], ramps: null, gangs: sim.state.gang.kind.length };
       if (R.key !== rampKey) { rampKey = R.key; out.ramps = rampsForDrawing(sim, R); }
       const Q = queueIndex(sim, plans);
-      for (let g = 0; g < sim.state.gang.kind.length; g++) {
-        const tr = tripOf(sim, R, plans, g, Q);
+      const all = Array.from(sim.state.gang.kind, (_, g) => tripOf(sim, R, plans, g, Q));
+      passWindows(all);
+      for (const tr of all) {
+        const g = tr.g;
         if (sigs[g] === tr.sig) continue;
         sigs[g] = tr.sig;
         out.trips.push(tr);
@@ -606,7 +803,9 @@ export function gangTracker() {
 // every gang's trip, for tests and benchmarks
 export function gangTrips(sim) {
   const R = rampScene(sim), plans = planner(sim), Q = queueIndex(sim, plans);
-  return sim.state.gang.kind.length ? Array.from(sim.state.gang.kind, (_, g) => tripOf(sim, R, plans, g, Q)) : [];
+  const all = Array.from(sim.state.gang.kind, (_, g) => tripOf(sim, R, plans, g, Q));
+  passWindows(all);
+  return all;
 }
 
 // What the page needs to draw the ramps: the straight wedges and each face's zigzag up to
@@ -626,7 +825,7 @@ export function rampsForDrawing(sim, R = rampScene(sim)) {
     if (!ledges.length) ledges = null;
   }
   const lw = th.id === 'internal' ? sim.P.ramp.internal.width : th.id === 'spiral' ? sim.P.ramp.spiral.width : R.zw;
-  return { key: R.key, done: R.done, Y: R.Y, hr: R.hr, F: R.F, plat: R.plat, w: R.w, zw: R.zw, sw: R.sw, top: R.top, zig, ledges, lw, inside: !!th.ledgeInside };
+  return { key: R.key, done: R.done, Y: R.Y, hr: R.hr, F: R.F, plat: R.plat, w: R.w, zw: R.zw, sw: R.sw, top: R.top, zig, ledges, lw, inside: !!th.ledgeInside, built: R.built, clear: sim.P.ramp.internal.clearance };
 }
 
 // ---- placing the figures ------------------------------------------------------------------
@@ -649,7 +848,7 @@ export function prep(trip) {
   trip.paths.forEach((p, i) => { if (typeof p === 'number') lines[i] = new Line(reverse(trip.paths[p])); });
   const spec = crewSpec(trip.kind, trip.crew);
   const lead = (trip.load ? trip.load[2] / 2 : 0.7) + (trip.kind === HEAVY ? 1.6 : 0.9);
-  return (trip._prep = { lines, spec, lead });
+  return (trip._prep = { lines, spec, lead, W: gangHalfWidth(trip.kind, trip.crew, trip.load) });
 }
 
 // Where the trip stands at time t: the knot interval and how far through it.
@@ -692,29 +891,95 @@ const fade = (line, s) => smooth(s / 10) * smooth((line.L - s) / 10);
 function laneAt(trip, line, li, s, turn) {
   if (!trip.lane) return 0;
   let lane = trip.lane;
+  // in a yard's cross-aisle (before it reaches the avenue), a narrower keep-left
+  const a = trip.aisle && trip.aisle[li];
+  if (a != null) lane += (YARD_LANE - lane) * (li === 1 ? 1 - smooth((s - a + 3) / 6) : smooth((s - a + 3) / 6));
   if (li === 1 && trip.rampLane) lane += (trip.rampLane[1] - lane) * smooth((s - trip.rampLane[0]) / 10);
   // at the landing the gang moves over to its berth instead (over the last stretch)
   const b = trip.berth ? trip.berth[0] : 0, w = b ? trip.berth[1] : 10;
   let k = li === 1 ? smooth(s / 10) * smooth((line.L - s) / w) : li === 2 ? smooth(s / w) * smooth((line.L - s) / 10) : fade(line, s);
   const berth = !b ? 0 : li === 1 ? b * (1 - smooth((line.L - s) / w)) : li === 2 ? -b * (1 - smooth(s / w)) : 0;
   k *= turn;
-  if (trip.narrow) for (const [p, a, e] of trip.narrow) if (p === li) k *= 1 - smooth((s - a + 8) / 8) * smooth((e + 8 - s) / 8);
-  return lane * k + berth;
+  // (on the single-lane ledge, keep-left by trip.keep: room for a gang going up and one coming
+  // down to pass)
+  let nk = 1;
+  if (trip.narrow) for (const [p, a, e] of trip.narrow) if (p === li) nk *= 1 - smooth((s - a + 8) / 8) * smooth((e + 8 - s) / 8);
+  return (lane * nk + (trip.keep || 0) * (1 - nk)) * k + berth * turn;
 }
 
 const P3 = [0, 0, 0];
 // place a point at arc length s of path li, `lat` metres to the left (plus the gang's lane);
 // the heading is smoothed over ±4 m, and offsets shrink on sharp turns, so people off the
 // centre line round corners at a walk
-function placeOn(trip, lines, li, s, lat, out, o) {
-  const line = lines[li];
+function placeOn(trip, P, li, s, lat, out, o, t = 0) {
+  const line = P.lines[li];
   line.at(s, P3);
   const yaw = line.yaw(s, 4);
   // 1 on the straight, 0 on a hairpin: offsets to the side shrink on sharp turns
   const turn = (1 + Math.cos(line.yaw(s + 8, 3) - line.yaw(s - 8, 3))) / 2;
-  const off = lat * (0.4 + 0.6 * turn) + laneAt(trip, line, li, s, turn);
-  out[o] = P3[0] + Math.cos(yaw) * off; out[o + 1] = P3[1]; out[o + 2] = P3[2] - Math.sin(yaw) * off;
+  const nx = Math.cos(yaw), nz = -Math.sin(yaw); // to the left of travel
+  const ref = laneAt(trip, line, li, s, turn) + swing(trip, li, t) * turn + inward(trip, P, li, s);
+  const off = ref + lat * (0.4 + 0.6 * turn);
+  const x = P3[0] + nx * off, z = P3[2] + nz * off;
+  out[o] = x; out[o + 1] = P3[1] + groundStep(trip, P3, x, z); out[o + 2] = z;
   return yaw;
+}
+// On the course, the gang keeps to the bed: its lane or berth never takes it closer than its
+// half width W to the edge (moved over to the side, never along the way). Off the course (on
+// the ramps, the roads) nothing changes. Worked out once per trip along each path's stretch
+// on the course (trip.onCourse), every half metre, and eased over ±5 m, so a gang that turns
+// off the edge of the course moves back to its lane at a walk.
+const CL_STEP = 0.5, CL_EASE = 10, CP = [0, 0, 0];
+function inward(trip, P, li, s) {
+  const r = trip.onCourse && trip.onCourse[li];
+  if (!r) return 0;
+  P.cl ||= [];
+  let c = P.cl[li];
+  if (!c) {
+    const line = P.lines[li], n = Math.max(2, Math.ceil((r[1] - r[0]) / CL_STEP) + 1), raw = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const ss = r[0] + i * CL_STEP;
+      line.at(ss, CP);
+      const yaw = line.yaw(ss, 4), turn = (1 + Math.cos(line.yaw(ss + 8, 3) - line.yaw(ss - 8, 3))) / 2;
+      raw[i] = onCourse(CP, Math.cos(yaw), -Math.sin(yaw), laneAt(trip, line, li, ss, turn), P.W);
+    }
+    // (a moving average, twice: eased in and out)
+    const ease = (a) => {
+      const out = new Float32Array(n), pre = new Float64Array(n + 1);
+      for (let i = 0; i < n; i++) pre[i + 1] = pre[i] + a[i];
+      for (let i = 0; i < n; i++) out[i] = (pre[Math.min(n, i + CL_EASE + 1)] - pre[Math.max(0, i - CL_EASE)]) / (2 * CL_EASE + 1);
+      return out;
+    };
+    c = P.cl[li] = { s0: r[0], v: ease(ease(raw)) };
+  }
+  const x = (s - c.s0) / CL_STEP, i = Math.floor(x);
+  if (i < 0 || i >= c.v.length - 1) return 0;
+  return c.v[i] + (c.v[i + 1] - c.v[i]) * (x - i);
+}
+function onCourse(c, nx, nz, ref, W) {
+  const hb = halfWidthAt(c[1]), m = Math.max(Math.abs(c[0]), Math.abs(c[2]));
+  const w = 1 - smooth((m - hb) / 1.5);
+  if (w <= 0) return 0;
+  const A = Math.max(0, hb - W - EDGE);
+  let d = 0;
+  for (const [q0, n] of [[c[0], nx], [c[2], nz]]) {
+    const q = q0 + n * (ref + d);
+    if (Math.abs(q) <= A || Math.abs(n) < 1e-3) continue;
+    const need = (Math.sign(q) * A - q) / n; // (sideways only: a way that runs straight at the edge is not shortened)
+    d += Math.max(-6, Math.min(6, need)) * smooth((Math.abs(n) - 0.1) / 0.3);
+  }
+  return d * w;
+}
+// Each man stands on the ground where he is, not at the height of the middle of the way: on a
+// road across a slope, a ramp's sides or the quay (where the trip's path follows the ground).
+function groundStep(trip, c, x, z) {
+  const G = trip.ground;
+  if (!G) return 0;
+  const tc = terrainY(G, c[0], c[2]);
+  // (the path follows the ground between samples a few metres apart: within a few cm of it; not
+  // on a ledge, or on the bed of the next course, above what is built)
+  const w = 1 - smooth((Math.abs(c[1] - tc) - 0.25) / 0.2);
+  return w > 0 ? w * (terrainY(G, x, z) - c[1]) : 0;
 }
 
 // Layout of the output of figures(): the sled, then FIG numbers per crew member.
@@ -727,19 +992,25 @@ function formation(trip, P, li, s, act, out, o, t, speed) {
   const { spec, lead, lines } = P, line = lines[li];
   const moving = speed > 0.02;
   // sled
-  const yaw = placeOn(trip, lines, li, s, 0, out, o);
+  const yaw = placeOn(trip, P, li, s, 0, out, o, t);
   out[o + 3] = yaw;
   out[o + 4] = -Math.atan(line.slope(s));
   let f = o + SLED;
   const pull = act === ACT.HAUL, ret = act === ACT.RETURN || act === ACT.WALK;
+  // the way out ends at the landing (or the stone's place): the front ranks do not walk on past
+  // it (into the stones already set there, or off the edge of the course) but peel off to either
+  // side and stand back along the way they came, beside the sled
+  const end = li === 1 ? line.L : Infinity, fw = foldWidth(trip.kind);
   for (let r = 0; r < spec.ranks; r++) for (let j = 0; j < spec.files; j++) {
-    const sp = s + lead + r * spec.gap;
-    out[f + 3] = placeOn(trip, lines, li, sp, spec.lat[j], out, f);
+    let sp = s + lead + r * spec.gap, lat = spec.lat[j], e = 0;
+    if (sp > end) { e = sp - end; sp = end - e; lat += Math.sign(lat) * fw * smooth(e / 0.8); }
+    const yw = placeOn(trip, P, li, sp, lat, out, f, t);
+    out[f + 3] = e > 0 ? lerpAngle(yw, yw + Math.PI, smooth(e / 1.5)) : yw;
     let pose = POSE.REST;
-    if (pull) pose = POSE.PULL;
+    if (pull) pose = e > 0.8 ? POSE.REST : POSE.PULL;
     else if (ret) pose = moving ? (r === 0 ? POSE.PULL : POSE.WALK) : POSE.REST;
     else if (act === ACT.IDLE && (r * 7 + j * 3) % 5 === 0) pose = POSE.KNEEL;
-    out[f + 4] = pose; out[f + 5] = sp + (r * 0.37 + j * 0.5); out[f + 6] = moving ? speed : 0;
+    out[f + 4] = pose; out[f + 5] = s + lead + r * spec.gap + (r * 0.37 + j * 0.5); out[f + 6] = moving ? speed : 0;
     f += FIG;
   }
   // pourers at the front corners of the sled, levermen behind it
@@ -748,7 +1019,7 @@ function formation(trip, P, li, s, act, out, o, t, speed) {
     const side = k % 2 ? 1 : -1;
     const sp = pourer ? s + lead * 0.55 + Math.floor(k / 2) * 0.7 : s - lead * 0.9 - Math.floor((k - spec.pourers) / 2) * 0.7;
     const lat = pourer ? side * (trip.load ? trip.load[0] / 2 + 0.55 : 0.8) : spec.extra > 2 ? side * 0.5 : 0;
-    out[f + 3] = placeOn(trip, lines, li, sp, lat, out, f);
+    out[f + 3] = placeOn(trip, P, li, sp, lat, out, f, t);
     let pose = POSE.REST;
     if (pull) pose = pourer ? POSE.POUR : POSE.PUSH;
     else if (act === ACT.TURN || act === ACT.LOAD || act === ACT.UNLOAD || act === ACT.SET) pose = POSE.LEVER;
@@ -757,12 +1028,83 @@ function formation(trip, P, li, s, act, out, o, t, speed) {
     f += FIG;
   }
 }
+// how far out the folded front ranks stand beside their own file (clear of the sled and the
+// levermen behind it)
+const foldWidth = (kind) => (kind === HEAVY ? 1.2 : 0.9);
+
+// ---- the course being laid, as people walk on it ---------------------------------------
+// The paths run on the bed of the course (or, for the next course, on top of this one). The
+// stones already set (or being levered in) stand a course high on that bed: people and sleds
+// on the bed climb onto them, and on the top of the course step down where none is set yet,
+// over 0.6 m at each stone's edge (no one jumps a course high at a step).
+//   L: courseLayout() (sim/view.js); course: viewState().course (the same counts the page
+//   draws the stones from)
+export function courseSurface(L, course) {
+  if (!L || !course || course.ci !== L.ci || !L.n || !(L.cell > 0)) return null; // (the capstone's course has no grid of stones)
+  const set = new Uint8Array(L.n * L.n);
+  for (let s = 0; s < L.sectors; s++) {
+    for (let j = 0; j < course.gClaim[s]; j++) { const i = L.cells[L.off[2 * s] + j]; if (!rampOpening(L, i)) set[i] = 1; }
+    for (let j = 0; j < course.tClaim[s]; j++) { const i = L.cells[L.off[2 * s + 1] + j]; if (!rampOpening(L, i)) set[i] = 1; }
+  }
+  // granite lining blocks (not roof beams, which lie across their openings)
+  for (let j = 0; j < course.heavyState.length; j++) {
+    const H = L.heavy, b = j * HV;
+    if (course.heavyState[j] !== 2 || H[b + 6] === 1) continue;
+    const i = Math.floor((H[b] + L.hw) / L.cell), k = Math.floor((H[b + 1] + L.hw) / L.cell);
+    if (i >= 0 && k >= 0 && i < L.n && k < L.n) set[k * L.n + i] = 1;
+  }
+  return { y0: L.y0, h: L.h, n: L.n, cell: L.cell, hw: L.hw, set };
+}
+// Is cell i of the course being laid where a ramp (or a ledge) arrives? The model sets each
+// sector's stones farthest first, so the outer ring at a ramp head can stand before the course
+// is done, a course high across the way up. As drawn, those stones wait until the course is
+// finished (as if set last, behind the ramp): the way onto the course stays open.
+export function rampOpening(L, i) {
+  const x = -L.hw + ((i % L.n) + 0.5) * L.cell, z = -L.hw + (((i / L.n) | 0) + 0.5) * L.cell;
+  // (the trench where a ramp inside the masonry comes up through this course: rampTrench())
+  if (L.trench) for (const [x0, x1, z0, z1] of L.trench) if (x > x0 && x < x1 && z > z0 && z < z1) return true;
+  if (!L.openings || !L.openings.length) return false;
+  for (const [f, u, half] of L.openings) {
+    const [n, t] = FACES[f];
+    if (x * n[0] + z * n[1] > L.hw - L.cell && Math.abs(x * t[0] + z * t[1] - u) < half) return true;
+  }
+  return false;
+}
+const STEP = 0.6;
+// how much of the course height stands under (x, z): 1 on a set stone, 0 a step's width from any
+function setUnder(S, x, z) {
+  const fx = (x + S.hw) / S.cell, fz = (z + S.hw) / S.cell;
+  if (!Number.isFinite(fx) || !Number.isFinite(fz)) return 0;
+  const i0 = Math.floor(fx), k0 = Math.floor(fz);
+  let best = 0;
+  for (let k = k0 - 1; k <= k0 + 1; k++) for (let i = i0 - 1; i <= i0 + 1; i++) {
+    if (i < 0 || k < 0 || i >= S.n || k >= S.n || !S.set[k * S.n + i]) continue;
+    const dx = Math.max(0, i - fx, fx - i - 1) * S.cell, dz = Math.max(0, k - fz, fz - k - 1) * S.cell;
+    const v = 1 - Math.min(1, Math.hypot(dx, dz) / STEP);
+    if (v > best) best = v;
+  }
+  return best;
+}
+// the height to stand at for a point placed at height y on a path (y unchanged off the course's
+// bed and top, and on the straight ramps, whose heads stand over its outer stones)
+export function onSurface(S, G, x, y, z) {
+  if (Math.max(Math.abs(x), Math.abs(z)) > S.hw + STEP) return y;
+  const a = Math.abs(y - S.y0), b = Math.abs(y - S.y0 - S.h);
+  const w = 1 - smooth((Math.min(a, b) - 0.05) / 0.1);
+  if (w <= 0) return y;
+  // (not on a straight ramp, eased off where its surface comes down to the bed)
+  let r = 0;
+  if (G) for (let f = 0; f < 4; f++) r = Math.max(r, smooth((wedgeY(G, f, x, z) - S.y0 + 0.3) / 0.3));
+  return y + w * (1 - r) * (S.y0 + S.h * setUnder(S, x, z) - y);
+}
 
 const TOK = {};
 let A = new Float32Array(0), Bf = new Float32Array(0);
 // Places a gang at time t into out (from offset o): SLED numbers, then FIG per crew member
 // (crewSpec(kind, crew).n of them). Returns the token state (tokenAt).
-export function figures(trip, t, out, o = 0) {
+// surf (optional, see courseSurface): the course being laid as it is drawn at time t; people
+// and sleds on it stand on the stones already set and step down where none is yet.
+export function figures(trip, t, out, o = 0, surf = null) {
   const P = prep(trip), tok = tokenAt(trip, t, TOK);
   const n = P.spec.n, size = SLED + n * FIG;
   if (!tok.blend) {
@@ -793,6 +1135,7 @@ export function figures(trip, t, out, o = 0) {
       out[p + 6] = walking ? (tau > 0 ? d / tau : 0) : 0;
     }
   }
+  if (surf) for (let i = o, e = o + size; i < e; i = i === o ? o + SLED : i + FIG) out[i + 1] = onSurface(surf, trip.ground, out[i], out[i + 1], out[i + 2]);
   // the stone: on the sled while loaded; slid on from beside the sled while loading, levered
   // off ahead of it at the landing, and lowered onto its bed by a heavy gang
   const L = trip.load;

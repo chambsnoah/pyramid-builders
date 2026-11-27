@@ -375,6 +375,8 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
+    bubble.setCourse(working.layout, view.course); // (gangs walk on the stones as drawn)
+    monument.setHoles(working.layout?.y0, view.course && working.layout?.ci === view.course.ci ? working.layout.trench : null); // (an internal ramp's trench)
     applyReveal();
     if (m.gangs) bubble.apply(m.gangs);
     bubble.setVisible(!view.done);
