@@ -4,8 +4,10 @@
 // carries four of them at different heights. A sled turns round the arris at every corner,
 // which limits how closely sleds can follow one another. There are no straight ramps: from
 // the first course the gangs climb the spirals, and the climb grows longer with every lap.
+// Above topY only one ledge goes on to the apex (see topOf in straightZigzag.js): four
+// ledges a lap apart would wrap the small top in ramps.
 import { COURSES, TAN, halfWidthAt } from '../../data.js';
-import { FACES } from './straightZigzag.js';
+import { FACES, topOf, atTop } from './straightZigzag.js';
 import { squareSpiral, spiralPrefix } from './spiralPath.js';
 
 export function createSpiral(p) {
@@ -13,6 +15,7 @@ export function createSpiral(p) {
   const r = (y) => halfWidthAt(y) + Z.width / 2; // the middle of the ledge, outside the face
   const paths = FACES.map((_, f) => squareSpiral({ face: f, r, grade: Z.grade }));
   const ledge = (route, y) => spiralPrefix(paths[route], y);
+  const top = topOf(p);
 
   function layout(ci) {
     const y = COURSES[ci].y0;
@@ -24,17 +27,17 @@ export function createSpiral(p) {
       const seg = { res: `spiral${f}`, kind: 'spiral', length: L.length, rise: y, grade: Z.grade, lanes: Z.lanes, headway: L.turns ? Math.max(Z.headway, Z.turnTime) : Z.headway, turns: L.turns, turnTime: Z.turnTime };
       return { id: f, face: f, foot: [paths[f][0][0], paths[f][0][2]], head, segs: [seg] };
     });
-    return { routes, switchCi: 0 };
+    return { routes: atTop(top, ci, routes), switchCi: 0 };
   }
 
   // each ledge needs a retaining fill under it about as deep as the face rises across its width
   function fill(ci) {
     const y = COURSES[ci].y0;
     let len = 0;
-    for (let f = 0; f < 4; f++) len += ledge(f, y).length;
+    for (let f = 0; f < 4; f++) len += ledge(f, top && f !== top.route ? Math.min(y, top.y) : y).length;
     const v = len * Z.width * (Z.width * TAN / 2);
     return { total: v, parts: { spiral: v } };
   }
 
-  return { id: 'spiral', name: 'Four ramps spiralling round the faces', short: 'Spiral', switchCi: 0, switchY: 0, layout, fill, ledge, ledgeInside: false };
+  return { id: 'spiral', name: 'Four ramps spiralling round the faces', short: 'Spiral', switchCi: 0, switchY: 0, top, layout, fill, ledge, ledgeInside: false };
 }

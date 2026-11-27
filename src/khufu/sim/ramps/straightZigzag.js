@@ -5,6 +5,7 @@
 // - Above switchY the straight ramps stop growing. Sleds still climb them, then turn onto a
 //   narrow ramp switching back and forth up the face, built on the stepped backing stones.
 //   Each switchback turns the sled on a landing, which limits how often sleds can follow.
+// - Above topY only one face's zigzag goes on to the apex (see topOf); the other three stop.
 import { COURSES, HALF, TAN, halfWidthAt } from '../../data.js';
 
 // face 0 S (+z), 1 E (+x), 2 N (−z), 3 W (−x): outward normal and the direction along the face
@@ -18,12 +19,32 @@ export function straightRamp(S, y) {
   return { run, length: Math.hypot(run, y), head: halfWidthAt(y), foot: Math.max(halfWidthAt(y) + run, HALF + 3), fill: run * (S.width * y / 2 + y * y / 3) };
 }
 
+// the course whose bed is nearest height y
+export function courseNear(y) {
+  let ci = 0;
+  for (let i = 0; i < COURSES.length; i++) if (Math.abs(COURSES[i].y0 - y) < Math.abs(COURSES[ci].y0 - y)) ci = i;
+  return ci;
+}
+
+// The top, for a theory with a ramp on every face: from course ci (the bed nearest p.topY)
+// up, a course is small enough for one ramp to serve all of it, and four ramps would crowd
+// round the shrinking faces (each zigzag ledge is 7 m wide, built down to the face below,
+// on a face only a few metres across near the apex). So only route `route` goes on; the
+// others stop at y and are not raised again. Without p.topY every route goes to the apex.
+export function topOf(p) {
+  if (!Number.isFinite(p.topY)) return null;
+  const ci = courseNear(p.topY);
+  return { ci, y: COURSES[ci].y0, route: p.topRoute ?? 0, label: 'One ramp left for the top: the others stop' };
+}
+// the routes in use for course ci, given every route a theory would have without a top
+export const atTop = (top, ci, routes) => (top && ci >= top.ci ? routes.filter((r) => r.id === top.route) : routes);
+
 export function createStraightZigzag(p) {
   const S = p.straight, Z = p.zigzag;
   // the course whose bed is nearest switchY: from it upward the zigzags are used
-  let switchCi = 0;
-  for (let i = 0; i < COURSES.length; i++) if (Math.abs(COURSES[i].y0 - p.switchY) < Math.abs(COURSES[switchCi].y0 - p.switchY)) switchCi = i;
+  const switchCi = courseNear(p.switchY);
   const switchY = COURSES[switchCi].y0;
+  const top = topOf(p);
 
   const straight = (y) => straightRamp(S, y);
   // zigzag from switchY up to y: flights no longer than most of the face width at the top
@@ -52,20 +73,22 @@ export function createStraightZigzag(p) {
       }
       return { id: f, face: f, foot, head, segs };
     });
-    return { routes, switchCi };
+    return { routes: atTop(top, ci, routes), switchCi };
   }
 
   // fill standing while course ci is laid. Straight ramp: a wedge of top width w with 1:2 side
   // slopes, so its section at height h is (w + h)·h, integrated along the run. Zigzag: each
   // metre of ramp needs a retaining fill about as deep as the face rises across its width.
+  // Above the top only one zigzag is still raised; the other three stand as they stopped.
   function fill(ci) {
     const y = COURSES[ci].y0;
     const Y = Math.min(y, switchY), st = straight(Y);
     const straightV = 4 * st.run * (S.width * Y / 2 + Y * Y / 3);
-    const z = zigzag(y);
-    const zigzagV = y > switchY ? 4 * z.length * Z.width * (Z.width * TAN / 2) : 0;
+    const len = (yy) => (yy > switchY ? zigzag(yy).length : 0);
+    const zigLen = top && y > top.y ? len(y) + 3 * len(top.y) : 4 * len(y);
+    const zigzagV = zigLen * Z.width * (Z.width * TAN / 2);
     return { total: straightV + zigzagV, parts: { straight: straightV, zigzag: zigzagV } };
   }
 
-  return { id: 'straight-zigzag', name: 'Straight ramps, then zigzags up the faces', short: 'Straight + zigzag', switchCi, switchY, switchLabel: 'Straight ramps topped out: zigzags begin', layout, fill };
+  return { id: 'straight-zigzag', name: 'Straight ramps, then zigzags up the faces', short: 'Straight + zigzag', switchCi, switchY, switchLabel: 'Straight ramps topped out: zigzags begin', top, layout, fill };
 }

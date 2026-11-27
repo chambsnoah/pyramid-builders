@@ -41,7 +41,7 @@ Workers find paths on a navigation grid with A*, step aside for each other and q
 
 Simulating the Great Pyramid of Khufu at full size ([plan: issue #1](https://github.com/chambsnoah/pyramid-builders/issues/1)): 230.3 m square and 146.6 m high, with 215 courses and a pyramidion. You can scrub through its 20-year build, see through it in X-ray and walk through its interior.
 
-- **Timeline in years:** play and pause, set the speed (from 1× real working time to a year a second), step a day or a month either way (←/→, Shift for a month), or drag to any working day. The clock shows the year of the build, the season and month (Akhet, Peret, Shemu), the day and the hour. Diamonds on the timeline mark milestones, such as the Queen's Chamber and King's Chamber roofed, the Grand Gallery complete, the ramps switching to zigzags and the capstone set; click one to jump there. On load the page shows the finished monument; `?year=9` or `?day=1500` opens at another time, and `&play` starts playing.
+- **Timeline in years:** play and pause, set the speed (from 1× real working time to a year a second), step a day or a month either way (←/→, Shift for a month), or drag to any working day. The clock shows the year of the build, the season and month (Akhet, Peret, Shemu), the day and the hour. Diamonds on the timeline mark milestones, such as the Queen's Chamber and King's Chamber roofed, the Grand Gallery complete, the ramps switching to zigzags, one ramp left for the top, and the capstone set; click one to jump there. On load the page shows the finished monument; `?year=9` or `?day=1500` opens at another time, and `&play` starts playing.
 - **The build, course by course:** the finished courses are drawn as surfaces and the course being laid block by block, with the stones being levered into place in gold, all read from the event model at the time on the timeline.
 - **Statistics:** blocks set, blocks per working day (with a chart of the whole build), workers on site (the season, the core crews and this month's levy) and the sled gangs out, coming back or waiting, the quarry yard and the casing on the quay, and the longest queues right now on the ramps, landings, berths and loading bays.
 - **Ramp theories:** `?ramp=spiral` or `?ramp=internal` runs the build with another theory of how the stones went up (the default is straight ramps, then zigzags). The statistics panel compares them: **Compare all theories** runs the other builds in spare workers (about 3 s) and shows each one's years, blocks per working day and ramp material; click a name to load it.
@@ -75,20 +75,21 @@ npm run khufu:theories                             # every ramp theory end to en
 - **Ramp theories** plug into `src/khufu/sim/ramps/` (`ramp.id` in `params.js`, `?ramp=` in the page):
   - **Straight ramps, then zigzags** (default). Up to 45 m a straight 1:8 ramp stands against each face. Above that the sleds climb those ramps, then switch back up the faces on 1:6 zigzags.
   - **Spiral.** Four 1:10 ledges, one from each corner, wind up round the faces outside the casing; the sleds turn round the arris at every corner (90 s).
+  - **The top: one ramp.** Above 120 m (`ramp.topY`) the courses are narrower than about 42 m. One ramp is enough for the 21,000 blocks left (under 1 % of them), and four would crowd the shrinking faces: near the apex the flights are only a few metres long, and each 7 m ledge is built down to the face, so four zigzags (or four spiral ledges a lap apart) piled into blocks round the last courses. So only the south face's zigzag, or the spiral ledge from the south-west corner (`ramp.topRoute`), is raised to the apex. The other three stop at 120 m and stand there until the ramps come down. Every sector of the top courses is served from that one ramp head. A timeline milestone marks the change. It costs about 45 working days with the zigzags and about 12 with the spiral, as one lane now carries the top. The internal ramp is a single route already and is unchanged.
   - **Internal (Houdin).** The straight ramps up to 45 m, then a single 7 % ramp inside the masonry, 12 m in from the faces, entered by a passage at the foot of the west face; sleds are turned with levers in a notch at each corner (150 s). Its gangs are seen in X-ray.
   - The spiral and internal ramps are one fixed path each (`ramps/spiralPath.js`), and the model's ramp length and corners are those of the drawn path.
 - **Time** is working time: days of 10 hours, years of 300 days of 12 months, four to a season. Every run with the same seed is identical, and the state is saved every simulated month so any day can be reached by restoring the month before it and replaying.
 - **The flood calendar.** Akhet (the flood), Peret and Shemu. The flood frees farm labour, so the levies are largest then (all of them in Akhet, 60 % in Peret, 40 % in Shemu). High water shortens the boats' round trip from Tura (×0.8 in Akhet, ×1.25 in Shemu), and the Aswan granite convoy arrives on it.
 - **Workforce rotation.** A core works all year: the setting crews, the Tura and heavy gangs, the boat crews, half the quarry crews and 64 % of the Giza sled gangs. The rest are levies who serve a month at a time: at the end of each month the group goes home as each crew finishes its job, and the next group arrives 5 hours later, sized by the season. A new crew whose sled is still out waits at the quarry and takes the sled over when the outgoing crew brings it back (with the 5-hour changeover every sled is already back). A levy gang off site is not drawn, and **Follow** moves on from one that goes home.
-- **Calibration:** with the defaults (`src/khufu/sim/params.js`), 2,295,833 blocks take 19.86 years, 38.5 blocks an hour, against the 38.3 of issue #1. The number of quarry crews is the main knob (440 at full strength): quarrying limits the first 15 years, hauling up the zigzags the last few.
+- **Calibration:** with the defaults (`src/khufu/sim/params.js`), 2,295,833 blocks take 20.01 years, 38.2 blocks an hour, against the 38.3 of issue #1. The number of quarry crews is the main knob (440 at full strength): quarrying limits the first 15 years, hauling up the zigzags the last few.
 
 | Ramp theory | Years | Blocks per working day | Ramp material | Ramps near the top take |
 | --- | --- | --- | --- | --- |
-| Straight + zigzag | 19.86 | 385 | 1.65 million m³ | 80 sleds/h |
-| Spiral | 19.73 | 388 | 0.18 million m³ | 160 sleds/h |
+| Straight + zigzag | 20.01 | 382 | 1.63 million m³ | 20 sleds/h (one zigzag above 120 m) |
+| Spiral | 19.77 | 387 | 0.16 million m³ | 40 sleds/h (one ledge above 120 m) |
 | Internal | 26.29 | 291 | 1.59 million m³ (incl. its gallery, to fill) | 24 sleds/h |
 
-With the same quarries, the spiral keeps up with the default and needs a ninth of the ramp material, but its ledges cover the corners and the casing. The internal ramp is one lane with a turn at every corner: once the straight ramps stop, it caps the build at 24 blocks an hour and adds six years.
+With the same quarries, the spiral keeps up with the default and needs a tenth of the ramp material, but its ledges cover the corners and the casing. The internal ramp is one lane with a turn at every corner: once the straight ramps stop, it caps the build at 24 blocks an hour and adds six years.
 
 ### The detail bubble
 
@@ -103,7 +104,7 @@ The worker sends each gang's current trip with every reply, but only when it has
   - Gangs climb in the ramp lane the model gave them, keep to the middle on the single-lane zigzag, and use two berths side by side at each landing.
 - **Ramps as drawn:**
   - The straight ramps are raised in 2 cm lifts as each course is laid, so gangs on them never jump a course height.
-  - The zigzag is one fixed ledge per face up to the apex. Each switchback takes its share of the model's turning time.
+  - The zigzag is one fixed ledge per face, up to 120 m on three faces and to the apex on the south face. Each switchback takes its share of the model's turning time.
 - **Known limitation:** the model lets a faster gang catch up with a slower one in the same lane, and two gangs can turn at the same switchback. They are then drawn overlapping, about 1% of the gangs at work at any moment. A queue for the zigzag longer than the straight ramp below it (up to about 50 gangs in Akhet of the last years) piles up at the foot of the straight ramp instead of reaching back down the road.
 
 ```bash
@@ -128,7 +129,7 @@ Each room is built in its own order, and can be watched while it is built (`src/
   - At the end of the build they are slid down into the ascending passage, the lowest first, until they fill its lower end. At Giza this happened after the burial, which is later than the timeline goes.
   - The plugs are not drawn while walking, so the ascending passage can still be walked.
 - **Milestones** mark the subterranean chamber left unfinished, the plugs lowered in, relieving chambers 1–4 roofed and the passage plugged, as well as the rooms already marked.
-- **The event model was unchanged by them** (hash `299106cca053f39f` until Phase 6 added the seasons and the levies: now `124648f64b35de45`). The rooms in the masonry were already built by it: their linings and beams are stones of the courses they pass through. The tunnel and the plugs are a schedule worked out from the finished run, and what is added for drawing (where a beam's gang stands and its place) stays out of the model's state.
+- **The event model was unchanged by them** (hash `299106cca053f39f` until Phase 6 added the seasons and the levies, then `124648f64b35de45` until a single ramp took over the top: now `9b89b2cc698ebefb`). The rooms in the masonry were already built by it: their linings and beams are stones of the courses they pass through. The tunnel and the plugs are a schedule worked out from the finished run, and what is added for drawing (where a beam's gang stands and its place) stays out of the model's state.
 
 ```bash
 npm run khufu:works   # room order, tunnelling rate, plugs in place, tunnellers in the cut, continuity
@@ -152,7 +153,7 @@ The first browser run needs `npx playwright install chromium`. Playwright serves
 
 | Layer | Tests | What they check |
 | --- | --- | --- |
-| Event model | `tests/unit/*.test.mjs`, the `khufu:*` scripts | The queue's order (ties in scheduling order, packing for snapshots), FIFO resources and `acquireAll`, the seeded random numbers, the planner (block count, casing ring, rooms open and lined, King's Chamber beams, every block in one sector, farthest-first), each ramp theory (routes climb to the course, fill grows, the model climbs the drawn path); then determinism, snapshots, seeks, gangs, works and theories |
+| Event model | `tests/unit/*.test.mjs`, the `khufu:*` scripts | The queue's order (ties in scheduling order, packing for snapshots), FIFO resources and `acquireAll`, the seeded random numbers, the planner (block count, casing ring, rooms open and lined, King's Chamber beams, every block in one sector, farthest-first), each ramp theory (routes climb to the course, fill grows, one route above the top, the model climbs the drawn path); then determinism, snapshots, seeks, gangs, works and theories |
 | Pages | `tests/e2e/load.spec.mjs` | `index.html` and `khufu.html` (and `?ramp=spiral`, `?ramp=internal`) load and run, with no console error; each page links to the other. Every browser test fails on any console error or uncaught exception (`tests/e2e/fixtures.mjs`). |
 | Timeline | `tests/e2e/timeline.spec.mjs` | Scrubbing across the build, back and forth; the statistics panel (blocks, course, workforce, gangs, quarry yard, queues) matches the event model run in Node at the same time; day and month steps, the arrow keys and the milestone marks; play, pause and playing into the end |
 | Tours | `tests/e2e/tours.spec.mjs` | The small pyramid's tour plays every shot (at 8× speed, `window.__tour.speed`). Khufu's tour, default and spiral, driven frame by frame: every stop, the capstone close-up, all seven walk legs, the closing circle, then the controls handed back; Esc and **End tour** stop it |

@@ -24,7 +24,7 @@ test('khufu.html loads, runs the model in its worker and shows the finished monu
   const run = await openKhufu(page);
   expect(run.hash).toBe(MODEL_HASH);
   expect(run.blocks).toBe(2295833);
-  expect(run.endT / (300 * 36000)).toBeCloseTo(19.86, 2);
+  expect(run.endT / (300 * 36000)).toBeCloseTo(20.01, 2);
   await expect(page.locator('#tour')).toBeEnabled();
   await expect(page.locator('#where')).toHaveText(/finished monument/);
   await expect(page.locator('#sBlocks')).toHaveText('2,295,833 of 2,295,833 blocks');

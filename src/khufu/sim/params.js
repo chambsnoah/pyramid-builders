@@ -67,6 +67,11 @@ export const DEFAULTS = {
   ramp: { // the ramp theory (src/khufu/sim/ramps/): 'straight-zigzag', 'spiral' or 'internal'
     id: 'straight-zigzag',
     switchY: 45, // straight ramps up to here (just above the King's Chamber floor), zigzags (or the internal ramp) above
+    // The top: above topY (courses narrower than about 42 m) one ramp is enough for the few
+    // stones left, and four would crowd the shrinking faces. Only route topRoute (the south
+    // face's zigzag, or the spiral ledge from the south-west corner) goes on to the apex; the
+    // others stop at topY. (The internal ramp is a single route already.)
+    topY: 120, topRoute: 0,
     straight: { grade: 1 / 8, lanes: 2, headway: 75, width: 18 },
     zigzag: { grade: 1 / 6, lanes: 1, headway: 75, turnTime: 180, width: 7, flightFrac: 0.8 },
     // four ledges, one starting from each corner, winding up round the faces; a sled turns

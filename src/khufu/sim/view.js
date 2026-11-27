@@ -134,6 +134,8 @@ export function milestones(run) {
   add(E('ascending'), 'Ascending passage complete', 'room');
   add(E('queen'), "Queen's Chamber roofed", 'room');
   if (ctx.theory.switchLabel) add(S.courseOpen[ctx.theory.switchCi], ctx.theory.switchLabel, 'ramp');
+  // (the tour's ramp stop is the switch, not this: see tour.js)
+  if (ctx.theory.top && S.courseOpen[ctx.theory.top.ci] >= 0) out.push({ t: S.courseOpen[ctx.theory.top.ci], label: ctx.theory.top.label, kind: 'ramp', top: true });
   add(E('antechamber'), 'Antechamber complete', 'room');
   add(E('king'), "King's Chamber roofed", 'room');
   add(E('gallery'), 'Grand Gallery complete', 'room');

@@ -36,7 +36,7 @@ export const test = base.extend({
 });
 export { expect };
 
-export const MODEL_HASH = '124648f64b35de45';
+export const MODEL_HASH = '9b89b2cc698ebefb';
 
 // open khufu.html (with a query) and wait until the event model has run in the worker and
 // the first state has arrived
