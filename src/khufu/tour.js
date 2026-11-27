@@ -216,7 +216,7 @@ export class KhufuTour {
     const S = this.S;
     if (this.idx >= this.stops.length) {
       // the finished monument
-      this.stop1 = { kind: 'end', t: S.endT, angle: (this.stops.at(-1)?.angle ?? 1) + 0.6, xray: false };
+      this.stop1 = { kind: 'end', t: S.finishT ?? S.endT, angle: (this.stops.at(-1)?.angle ?? 1) + 0.6, xray: false };
       this.wide = this.widePose(this.stop1, HEIGHT);
       this.caption('Finished', `${fmt(S.blocks)} blocks in ${(S.endT / YEAR).toFixed(1)} years of ${YEAR_DAYS} ten-hour working days. Now a walk inside.`);
       return;

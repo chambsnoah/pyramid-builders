@@ -20,8 +20,12 @@
 //    and rest there on the floor of its central channel. They are slid down into the
 //    ascending passage at the end of the build. (At Giza that happened after the burial,
 //    which is after the time the timeline covers; here it is the last thing before the end.)
+//  - The access stair up to the entrance (not historical: the casing was smooth, and the
+//    model adds it so the entrance can be walked to). It is built after the capstone, once the
+//    ramps are down, by one crew, in layers at the heights of the pyramid's courses; the
+//    timeline runs on until it is finished (W.stair.t1, the summary's finishT).
 // No three.js, no DOM: this runs in the worker, in the page and in Node.
-import { COURSES, ELEMENTS, LEVELS, floorY, ceilY, courseAt } from '../data.js';
+import { COURSES, ELEMENTS, LEVELS, STAIR, ENTRANCE_Y, floorY, ceilY, courseAt } from '../data.js';
 import { DAY } from './params.js';
 
 const D = Math.PI / 180;
@@ -69,6 +73,33 @@ const PLUG_X = (ASC.x0 + ASC.x1) / 2;
 const SLIDE_V = 0.4; // m/s, a controlled slide on a wetted bed, checked by ropes
 const SLIDE_GAP = 120; // s between one plug and the next
 
+// ---- the access stair ----------------------------------------------------------------
+const STAIR_RATE = 20; // m³ of stair masonry a day: one crew, about 8 blocks
+// its layers: [top, volume (m³)], at the pyramid's course heights up to the sill
+export const STAIR_LAYERS = (() => {
+  const w = STAIR.x1 - STAIR.x0, out = [];
+  for (let y0 = 0, i = 0; y0 < ENTRANCE_Y - 1e-6; i++) {
+    const y1 = Math.min(COURSES[i].y1, ENTRANCE_Y);
+    let v = 0;
+    for (const [za, zb, h] of STAIR.columns) v += w * (zb - za) * Math.max(0, Math.min(h, y1) - y0);
+    out.push([y1, v]);
+    y0 = y1;
+  }
+  return out;
+})();
+// the layers' finishing times from t0, one after the other at STAIR_RATE
+function stairSchedule(t0) {
+  let t = t0;
+  const done = STAIR_LAYERS.map(([y, v]) => [y, (t += (v / STAIR_RATE) * DAY)]);
+  return { t0, t1: t, done };
+}
+// How high the stair stands at time t: the top of its last finished layer (0 before it is begun)
+export function stairAt(W, t) {
+  let y = 0;
+  for (const [top, td] of W.stair.done) { if (t < td) break; y = top; }
+  return y;
+}
+
 // The whole schedule, from the run's summary (courseOpen, courseDone, elemDone, endT, elem).
 export function worksSchedule(sum) {
   const E = (id) => sum.elemDone[sum.elem.indexOf(id) + 1];
@@ -99,6 +130,9 @@ export function worksSchedule(sum) {
   const slide0 = sum.endT - 3600 - (PLUGS.length - 1) * SLIDE_GAP - slideDur;
   const slide = PLUGS.map((_, k) => [slide0 + k * SLIDE_GAP, slide0 + k * SLIDE_GAP + slideDur]);
 
+  // the access stair: begun once the capstone is set and the ramps are down
+  const stair = stairSchedule(sum.endT);
+
   // relieving chambers: each is roofed when the course over its top is finished
   const relieving = el('relieving').voids.map((v, i) => {
     const yTop = Math.max(ceilY(v, v.z0), ceilY(v, v.z1), ceilY(v, (v.z0 + v.z1) / 2));
@@ -125,8 +159,9 @@ export function worksSchedule(sum) {
     { id: 'king-shafts', label: "King's Chamber shafts complete", t: E('king-shafts') },
     { id: 'plugged', label: 'Ascending passage plugged', t: slide[slide.length - 1][1] },
     { id: 'pyramidion', label: 'Capstone set', t: E('pyramidion') },
+    { id: 'stair', label: 'Access stair built up to the entrance', t: stair.t1 },
   ].sort((a, b) => a.t - b.t);
-  return { stages, stop, ascCourse, plugs: { lower, slide, storeT, wallsCourse, roofCourse, ASC_LOW }, relieving, order };
+  return { stages, stop, ascCourse, plugs: { lower, slide, storeT, wallsCourse, roofCourse, ASC_LOW }, relieving, stair, order };
 }
 
 // Where the tunnelling stands at time t: the face of the descending passage (desc) and of

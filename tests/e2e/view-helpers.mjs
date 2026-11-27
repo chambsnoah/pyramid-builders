@@ -2,7 +2,8 @@
 import { seekTo } from './fixtures.mjs';
 
 export const DAY = 36000;
-// name, working day ('end': the capstone set; with `before`, that many seconds earlier),
+// name, working day ('end': the capstone set; with `before`, that many seconds earlier;
+// 'finished': the end of the timeline, the access stair built after the capstone),
 // camera: either [x, y, z, tx, ty, tz] or { gangNear: [x, z], dist, height }
 // (the camera put `dist` m south-east of the working gang nearest that point, looking at it),
 // and the view's own screenshot tolerance where the global one (playwright.config.mjs) is
@@ -15,15 +16,16 @@ export const VIEWS = [
   { name: 'quarry-gangs', day: 1500, cam: { gangNear: [22.5, 536], dist: 30, height: 15 }, shot: { threshold: 0.25, maxDiffPixelRatio: 0.002 } },
   { name: 'south-ramp-gangs', day: 1500, cam: { gangNear: [0, 150], dist: 28, height: 14 } },
   { name: 'zigzag-gangs', day: 4500, cam: { gangNear: [70, 60], dist: 30, height: 16 } },
-  { name: 'xray-kings-chamber', day: 'end', xray: true, cam: [70, 75, -70, 4, 42, 8] },
-  { name: 'finished-far', day: 'end', cam: [-1400, 500, 1500, 0, 40, 0] },
+  { name: 'xray-kings-chamber', day: 'finished', xray: true, cam: [70, 75, -70, 4, 42, 8] },
+  { name: 'finished-far', day: 'finished', cam: [-1400, 500, 1500, 0, 40, 0] },
 ];
 
 // put the page at a view: seek, aim the camera, and hold the frame loop so the picture stays
 // still (gangs placed at the view's time, dt 0)
 export async function showView(page, v) {
   await page.evaluate(() => { __khufu.hold = false; });
-  const t = v.day === 'end' ? (await page.evaluate(() => __khufu.summary.endT)) - (v.before || 0) : v.day * DAY;
+  const t = v.day === 'end' ? (await page.evaluate(() => __khufu.summary.endT)) - (v.before || 0)
+    : v.day === 'finished' ? await page.evaluate(() => __khufu.summary.finishT) : v.day * DAY;
   await seekTo(page, t);
   await page.evaluate(({ v, t }) => {
     const K = __khufu;
@@ -44,6 +46,7 @@ export async function showView(page, v) {
     K.hold = true;
     K.bubble.update(t, K.camera, 0);
     K.works.update(t, false, K.camera);
+    K.working.frame(t);
     K.renderer.render(K.scene, K.camera);
   }, t);
   return t;

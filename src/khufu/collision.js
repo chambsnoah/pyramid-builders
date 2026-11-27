@@ -12,12 +12,14 @@ export class Collision {
   constructor(extraSolids = []) {
     this.cells = new Map();
     this.topY = HEIGHT; // top of the built masonry (lower while the pyramid is unfinished)
+    this.stairY = Infinity; // height the access stair is built to (0: not begun; it is built after the capstone)
     for (const el of ELEMENTS) for (const v of el.voids) this.index(v, 'void');
     for (const el of ELEMENTS) for (const s of el.solids || []) this.index(s, 'solid');
-    for (const s of [...STAIR_SOLIDS, ...extraSolids]) this.index(s, 'solid');
+    for (const s of STAIR_SOLIDS) this.index(s, 'solid', true);
+    for (const s of extraSolids) this.index(s, 'solid');
   }
-  index(v, kind) {
-    const e = { v, kind };
+  index(v, kind, stair = false) {
+    const e = { v, kind, stair };
     for (let i = Math.floor(v.x0 / CELL); i <= Math.floor(v.x1 / CELL); i++) {
       for (let k = Math.floor(v.z0 / CELL); k <= Math.floor(v.z1 / CELL); k++) {
         const kk = key(i, k);
@@ -52,9 +54,9 @@ export class Collision {
       s = out;
     }
     let added = false;
-    for (const { v, kind } of list) {
-      if (kind !== 'solid' || !inside(v)) continue;
-      const lo = floorY(v, z), hi = ceilY(v, z);
+    for (const { v, kind, stair } of list) {
+      if (kind !== 'solid' || !inside(v) || (stair && !(this.stairY > 0))) continue;
+      const lo = floorY(v, z), hi = stair ? Math.min(ceilY(v, z), this.stairY) : ceilY(v, z);
       if (hi > lo) { s.push({ y0: lo, y1: hi, walk: true }); added = true; }
     }
     if (!added) return s;

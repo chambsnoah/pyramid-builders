@@ -8,6 +8,8 @@ import { ELEM, HV } from './planner.js';
 import { GIZA, TURA, HEAVY, LAST } from './model.js';
 import { worksSchedule } from './works.js';
 import { theoryStats } from './compare.js';
+import { courseSurface, stockSpot } from './gangs.js';
+import { FACES } from './ramps/straightZigzag.js';
 
 // Live state of a queue resource at time t (see resource.js): `pend` holds the service start
 // times of users not yet served, `nf` when each server comes free.
@@ -79,8 +81,10 @@ export function viewState(sim) {
   if (rt) {
     const total = rt.gTot.reduce((a, b) => a + b, 0) + rt.tTot.reduce((a, b) => a + b, 0) + rt.heavyState.length;
     course = {
-      ci: S.cur, open: rt.open, total, left: rt.setLeft + rt.heavyLeft,
+      ci: S.cur, open: rt.open, total, left: rt.setLeft + rt.heavyLeft, t,
       gSet: rt.gSet.slice(), tSet: rt.tSet.slice(), gClaim: rt.gClaim.slice(), tClaim: rt.tClaim.slice(), heavyState: rt.heavyState.slice(),
+      // stones claimed but not yet set (drawn on their way: stonesView): [sector, kind, claim index, arrives]
+      work: workOf(rt),
     };
   }
   const built = sim.builtCourses();
@@ -96,7 +100,34 @@ export function viewState(sim) {
     queues: queues.slice(0, 8), landingWaiting, landings,
     elemSet: Array.from(S.elemSet),
     course,
+    stones: stonesView(sim),
   };
+}
+
+const workOf = (rt) => rt.work.flatMap((list, s) => list.map((w) => [s, w[0], w[1], w[2] + w[4]]));
+
+// The stones lying at the landings and those being moved to their places, in the course being
+// laid and the next one (stonesAt() in gangs.js places them at any time after this one).
+export function stonesView(sim) {
+  const S = sim.state, piles = [], work = [];
+  for (const ci of new Set([S.cur, S.look])) {
+    const rt = !S.done && S.rt[ci];
+    if (!rt) continue;
+    const p = sim.plan(ci);
+    for (let s = 0; s < rt.nSec; s++) {
+      const gp = rt.gPile[s], tp = rt.tPile[s], wk = rt.work[s];
+      if (!gp.length && !tp.length && !wk.length) continue;
+      const [x, z, fx, fz] = stockSpot(p, s), pi = piles.length;
+      const top = (a) => a.slice(-6).reverse(); // (the top ones are still being levered onto the pile)
+      piles.push({ ci, s, x, z, fx, fz, y: COURSES[ci].y0, cell: p.cell, hw: p.hw, h: p.h, sw: p.cell * 0.96, sh: p.h * 0.97, gn: gp.length, tn: tp.length, gTop: top(gp), tTop: top(tp) });
+      const sec = p.sectors[s];
+      for (const [kind, i, t0, t1, move, rank, td] of wk) {
+        const cell = kind === 0 ? sec.giza[i] : sec.tura[i];
+        work.push({ pile: pi, kind, i, t0, t1, move, rank, td, x: -p.hw + ((cell % p.n) + 0.5) * p.cell, z: -p.hw + (((cell / p.n) | 0) + 0.5) * p.cell });
+      }
+    }
+  }
+  return { t: S.t, piles, work };
 }
 
 // Where each block of course ci goes, in setting order, for drawing the part-laid course.
@@ -120,7 +151,50 @@ export function courseLayout(sim, ci) {
     const roof = h.kind === 'roof';
     heavy.set([h.x, h.z, h.granite ? 1 : 0, roof ? h.span + 1 : p.cell, h.axis === 'x' ? 0 : 1, h.elem, roof ? 1 : 0], HV * j);
   });
-  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, elem, heavy };
+  // where each ramp (or ledge) arrives at the edge of the course: the stones of the outer ring
+  // there are left open (see rampOpening() in gangs.js), [face, along the face, half width]
+  const R = sim.P.ramp, openings = [];
+  for (const rt of p.layout.routes) {
+    const [nrm, tan] = FACES[rt.face % 4], last = rt.segs[rt.segs.length - 1];
+    if (rt.head[0] * nrm[0] + rt.head[1] * nrm[1] < p.hw - p.cell) continue; // (an internal ramp comes up inside)
+    const half = last.kind === 'straight' ? R.straight.width / 2 : (R[last.kind]?.width ?? R.zigzag.width) / 2 + 1.5;
+    openings.push([rt.face % 4, rt.head[0] * tan[0] + rt.head[1] * tan[1], half]);
+  }
+  return { ci, n: p.n, cell: p.cell, hw: p.hw, y0: p.y0, h: p.h, sectors: k, off, cells, type, elem, heavy, openings, trench: rampTrench(sim, p.y0, p.y0 + p.h) };
+}
+
+// A ramp inside the masonry (the internal ramp) is a gallery with `clearance` m of masonry
+// over it, but where it comes up to the course being laid that roof thins out: from where its
+// floor is `clearance` below the top of the built courses (y0) up to the top of this course
+// (y1) it is drawn as a trench open to the sky. Its plan as rectangles [x0, x1, z0, z1]: the
+// top of the built courses is cut there (Monument.setHoles) and the stones of this course are
+// left out (rampOpening() in gangs.js), so gangs climbing it are not drawn in the masonry.
+export function rampTrench(sim, y0, y1) {
+  const th = sim.ctx.theory;
+  if (!th.ledgeInside || !(y1 > th.switchY)) return [];
+  const I = sim.P.ramp.internal, w = I.width / 2, lo = y0 - I.clearance, p = th.ledge(0, y1).pts, out = [];
+  for (let i = 3; i < p.length; i += 3) {
+    let ax = p[i - 3], ay = p[i - 2], az = p[i - 1], bx = p[i], by = p[i + 1], bz = p[i + 2];
+    if (Math.max(ay, by) <= lo) continue;
+    if (ay < lo) { const k = (lo - ay) / (by - ay); ax += (bx - ax) * k; az += (bz - az) * k; ay = lo; }
+    out.push([Math.min(ax, bx) - w, Math.max(ax, bx) + w, Math.min(az, bz) - w, Math.max(az, bz) + w]);
+  }
+  return out;
+}
+
+// The course being laid at the model's current time as gangs walk on it (courseSurface() in
+// gangs.js), from the same counts as viewState().course: for scripts and tests, which place
+// the figures as the page does.
+const surfaces = new WeakMap();
+export function courseSurfaceOf(sim) {
+  const S = sim.state, rt = !S.done && S.rt[S.cur];
+  if (!rt) return null;
+  const course = { ci: S.cur, t: S.t, gClaim: rt.gClaim, tClaim: rt.tClaim, heavyState: rt.heavyState, work: workOf(rt) };
+  const sig = `${S.cur}:${rt.gClaim.join(',')}:${rt.tClaim.join(',')}:${rt.heavyState.join('')}:${course.work.filter((w) => w[3] > S.t).map((w) => w.join(',')).join(';')}`;
+  let c = surfaces.get(sim);
+  if (!c || c.ci !== S.cur) surfaces.set(sim, (c = { ci: S.cur, L: courseLayout(sim, S.cur), sig: null, surf: null }));
+  if (c.sig !== sig) { c.sig = sig; c.surf = courseSurface(c.L, course); }
+  return c.surf;
 }
 
 // Milestones for the timeline, from the finished run: room completions (S.elemDone), course
@@ -145,6 +219,7 @@ export function milestones(run) {
   // the special works scheduled on top of the model (works.js)
   const W = worksSchedule(worksInput(run));
   for (const w of W.order) if (/^(subterranean-stop|plugs-stored|relieving-[1-4]|plugged)$/.test(w.id)) add(w.t, w.label, 'room');
+  add(W.stair.t1, 'Access stair built', 'course');
   // half the stone, from the per-day history
   const by = run.sim.hist.blocksByDay, half = S.blocksSet / 2;
   for (let d = 0, sum = 0; d < by.length; d++) { sum += by[d]; if (sum >= half) { add((d + 1) * DAY, 'Half the stone set', 'course'); break; } }
@@ -159,7 +234,7 @@ const worksInput = (run) => { const S = run.sim.state; return { courseOpen: S.co
 // The summary posted once the whole build has run.
 export function runSummary(run) {
   const S = run.sim.state, days = Math.ceil(S.t / DAY);
-  return {
+  const out = {
     endT: S.t, days, months: Math.ceil(S.t / MONTH), hash: run.sim.hash(), blocks: S.blocksSet, courses: LAST + 1,
     blocksByDay: run.sim.hist.blocksByDay.slice(0, days),
     courseOpen: S.courseOpen.slice(), courseDone: S.courseDone.slice(), elemDone: S.elemDone.slice(),
@@ -168,4 +243,7 @@ export function runSummary(run) {
     switchCi: run.sim.ctx.theory.switchCi, rampName: run.sim.ctx.theory.name, theory: theoryStats(run.sim),
     works: worksSchedule(worksInput(run)),
   };
+  // the timeline runs on past the capstone (endT) until the access stair is built
+  out.finishT = out.works.stair.t1;
+  return out;
 }

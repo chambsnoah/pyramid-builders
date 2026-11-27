@@ -16,9 +16,9 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { Crowd } from '../workers.js';
 import { buildTextures as buildAssetTextures, buildMaterials, buildGeometries } from '../assets.js';
-import { figures, crewSpec, ACT, POSE, SLED, FIG } from './sim/gangs.js';
+import { figures, crewSpec, courseSurface, ACT, POSE, SLED, FIG } from './sim/gangs.js';
 import { FACES } from './sim/ramps/straightZigzag.js';
-import { TAN } from './data.js';
+import { TAN, HALF } from './data.js';
 import { FIGURE } from './sim/works.js';
 
 export const NEAR = 120, NEAR_OUT = 140, FAR = 700, BUDGET = 1500;
@@ -50,6 +50,7 @@ export class Bubble {
   constructor(scene) {
     this.scene = scene;
     this.trips = []; this.bufs = []; this.acts = [];
+    this.surf = null; this.surfSig = ''; // the course being laid, as gangs walk on it (setCourse)
     this.inside = new Set(); // gangs drawn as articulated workers
     this.crowd = null; // made on first use (it builds the small pyramid's textures)
     this.ramps = null; this.rampKey = null; this.visible = true;
@@ -77,7 +78,12 @@ export class Bubble {
       this.trips[trip.g] = trip;
     }
   }
-  reset() { this.trips = []; this.bufs = []; this.inside.clear(); this.rampKey = null; }
+  reset() { this.trips = []; this.bufs = []; this.inside.clear(); this.rampKey = null; this.surf = null; this.surfSig = ''; }
+  // the course being laid as drawn (WorkingCourse): people stand on its stones (courseSurface)
+  setCourse(layout, course) {
+    const sig = course && layout ? `${course.ci}:${course.gClaim.join(',')}:${course.tClaim.join(',')}:${course.heavyState.join('')}` : '';
+    if (sig !== this.surfSig) { this.surfSig = sig; this.surf = sig ? courseSurface(layout, course) : null; }
+  }
   setVisible(on) {
     this.visible = on;
     for (const m of [this.sleds, this.stones, this.far]) m.visible = on;
@@ -112,7 +118,9 @@ export class Bubble {
     if (r.Y > 0) for (let f = 0; f < 4; f++) {
       // stations from the inner end of the 1:1 drop to the foot, with the height at each
       const st = [[r.hr - r.Y, 0], [r.hr, r.Y], [r.hr + r.plat, r.Y], [r.F, 0]];
-      const sec = ([rr, a]) => [P(f, rr, -(r.w / 2 + a), -0.3), P(f, rr, -r.w / 2, a), P(f, rr, r.w / 2, a), P(f, rr, r.w / 2 + a, -0.3)];
+      // (the sides at 1:1 all the way down to the ground: each side between two stations is then
+      // one plane, with no crease where the landing on top meets the slope)
+      const sec = ([rr, a]) => [P(f, rr, -(r.w / 2 + a + 0.3), -0.3), P(f, rr, -r.w / 2, a), P(f, rr, r.w / 2, a), P(f, rr, r.w / 2 + a + 0.3, -0.3)];
       for (let i = 0; i < 3; i++) {
         const s0 = sec(st[i]), s1 = sec(st[i + 1]);
         for (let k = 0; k < 3; k++) quad(s0[k], s1[k], s1[k + 1], s0[k + 1]);
@@ -121,22 +129,57 @@ export class Bubble {
     // the zigzag (or a spiral ledge): a ledge zw wide along the path, with its outer side
     // built down to the face; the internal ramp: just its floor, a slab inside the masonry
     const ledge = (p, w, inside) => {
+      const h = w / 2, done = []; // (the flights already drawn, below this one)
+      // what the outer side of a flight comes down onto at o: the face, or a flight below whose
+      // ledge is under it there (near the top the flights are short and close together: built
+      // down to the face, each would cut through the one below)
+      const floorAt = (o) => {
+        let y = TAN * (HALF - Math.max(Math.abs(o[0]), Math.abs(o[2])));
+        for (const f of done) {
+          const t = ((o[0] - f.a[0]) * f.dx + (o[2] - f.a[2]) * f.dz) / (f.L * f.L);
+          if (t < 0 || t > 1 || Math.abs((o[0] - f.a[0]) * f.px + (o[2] - f.a[2]) * f.pz) > h) continue;
+          const top = f.a[1] + (f.b[1] - f.a[1]) * t;
+          if (top < o[1] - 0.05) y = Math.max(y, top);
+        }
+        return Math.min(y, o[1] - 0.05);
+      };
       for (let i = 0; i + 5 < p.length; i += 3) {
         const a = [p[i], p[i + 1], p[i + 2]], b = [p[i + 3], p[i + 4], p[i + 5]];
         const dx = b[0] - a[0], dz = b[2] - a[2], L = Math.hypot(dx, dz);
         if (L < 1e-6) continue;
         let px = -dz / L, pz = dx / L;
         if (px * (a[0] + b[0]) + pz * (a[2] + b[2]) < 0) { px = -px; pz = -pz; } // p points away from the pyramid's axis
-        const h = w / 2, drop = inside ? 0.4 : w * TAN + 1;
         const ai = [a[0] - px * h, a[1], a[2] - pz * h], ao = [a[0] + px * h, a[1], a[2] + pz * h];
         const bi = [b[0] - px * h, b[1], b[2] - pz * h], bo = [b[0] + px * h, b[1], b[2] + pz * h];
-        const ad = [ao[0], ao[1] - drop, ao[2]], bd = [bo[0], bo[1] - drop, bo[2]];
         quad(ai, bi, bo, ao);
-        quad(ao, bo, bd, ad, [px, 0, pz]);
-        // the ends of each flight, closed down to the face
+        // the outer side, built down to what is under it (in 2 m pieces)
+        const at = (k) => [ao[0] + (bo[0] - ao[0]) * k, ao[1] + (bo[1] - ao[1]) * k, ao[2] + (bo[2] - ao[2]) * k];
+        const down = (q) => [q[0], inside ? q[1] - 0.4 : floorAt(q), q[2]];
+        const n = inside ? 1 : Math.max(1, Math.ceil(L / 2));
+        let q0 = ao, d0 = down(ao);
+        const ad = d0;
+        for (let k = 1; k <= n; k++) {
+          const q1 = at(k / n), d1 = down(q1);
+          quad(q0, q1, d1, d0, [px, 0, pz]);
+          q0 = q1; d0 = d1;
+        }
+        const bd = d0;
+        // the ends of each flight, closed down to what is under them
         const L2 = [dx / L, 0, dz / L];
         tri(ai, ao, ad, [-L2[0], 0, -L2[2]]);
         tri(bi, bo, bd, L2);
+        done.push({ a, b, dx, dz, L, px, pz });
+        // inside the masonry: where its roof thins out near the top of the built courses, the
+        // gallery is a trench open to the sky (rampTrench() in sim/view.js), walled up to that top
+        if (inside && r.built > 0 && Math.max(a[1], b[1]) > r.built - r.clear && Math.min(a[1], b[1]) < r.built) {
+          const k = (y) => (b[1] - a[1] > 1e-9 ? Math.min(1, Math.max(0, (y - a[1]) / (b[1] - a[1]))) : 0);
+          const k0 = k(r.built - r.clear), k1 = k(r.built);
+          const at = (q, kk, off) => [q[0] + dx * kk + px * off, a[1] + (b[1] - a[1]) * kk, q[2] + dz * kk + pz * off];
+          for (const side of [-1, 1]) {
+            const f0 = at(a, k0, side * h), f1 = at(a, k1, side * h);
+            quad(f0, f1, [f1[0], r.built, f1[2]], [f0[0], r.built, f0[2]], [-side * px, 0, -side * pz]);
+          }
+        }
       }
     };
     if (r.zig) r.zig.forEach((p) => ledge(p, r.zw, false));
@@ -163,7 +206,7 @@ export class Bubble {
       const trip = this.trips[g];
       if (!trip || trip.away) continue; // (a levy gang off site)
       const o = this.bufs[g];
-      const tok = figures(trip, t, o);
+      const tok = figures(trip, t, o, 0, this.surf);
       this.acts[g] = tok.act;
       const L = trip.load;
       // sled and stone
@@ -256,6 +299,8 @@ export class Bubble {
         A.set(o[0] + fx * half + fz * spec.lat[j] * 0.5, o[1] + 0.25, o[2] + fz * half - fx * spec.lat[j] * 0.5);
         for (let r = 0; r < spec.ranks; r++) {
           const w = W[base + r * spec.files + j];
+          // (not to the front ranks that have stepped back beside the sled at the landing)
+          if ((w.pos.x - o[0]) * fx + (w.pos.z - o[2]) * fz < half) break;
           B.copy(w.handL).add(w.handR).multiplyScalar(0.5);
           this.crowd.segment('rope', A, B);
           A.copy(B);

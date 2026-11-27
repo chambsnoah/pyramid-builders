@@ -4,7 +4,7 @@
 import { test, expect, seekTo, sharedPage } from './fixtures.mjs';
 import { VIEWS, showView, DAY } from './view-helpers.mjs';
 import { runFull, T, NT, HEAVY } from '../../src/khufu/sim/index.js';
-import { seeker } from '../../src/khufu/sim/view.js';
+import { seeker, courseSurfaceOf } from '../../src/khufu/sim/view.js';
 import { gangTracker, figures, crewSpec, SLED, FIG } from '../../src/khufu/sim/gangs.js';
 
 test.describe.configure({ mode: 'serial' });
@@ -37,12 +37,13 @@ const drawn = () => shared.page.evaluate(() => {
   return { tokens, sleds: { gangs: ns, drawn: B.sleds.count }, people, far, inside: [...B.inside], cam: K.camera.position.toArray() };
 });
 // the same gangs from the model run here in Node
+// (people stand on the stones of the course being laid, as the page draws them)
 function model(t) {
-  const tr = gangTracker(), u = tr.update(at.seekTo(t)), out = {};
+  const sim = at.seekTo(t), tr = gangTracker(), u = tr.update(sim), surf = courseSurfaceOf(sim), out = {};
   for (const trip of u.trips) {
     if (trip.away) continue;
     const buf = new Float32Array(SLED + crewSpec(trip.kind, trip.crew).n * FIG);
-    figures(trip, t, buf);
+    figures(trip, t, buf, 0, surf);
     const people = [];
     for (let f = SLED; f < buf.length; f += FIG) people.push([buf[f], buf[f + 1], buf[f + 2], buf[f + 4]]);
     out[trip.g] = { sled: [buf[0], buf[1], buf[2]], people };
@@ -84,6 +85,21 @@ const V = Object.fromEntries(VIEWS.map((v) => [v.name, v]));
 for (const v of [V['quarry-gangs'], V['zigzag-gangs']]) {
   test(`tokens and workers match the model, inside and outside the bubble (${v.name})`, () => matchModel(v));
 }
+
+// On the course being laid: gangs crossing it to their landings stand on the stones already
+// set (the page builds that surface from the same counts it draws the stones from), and the
+// page and the model in Node put every one of them in the same place.
+const LANDING = { name: 'landing-gangs', day: 1545.4, cam: { gangNear: [-74.5, -97.7], dist: 25, height: 12 } };
+test('on the course being laid, people stand on its stones where the model puts them', async () => {
+  await matchModel(LANDING, { minInside: 1 });
+  const t = LANDING.day * DAY, sim = at.seekTo(t), surf = courseSurfaceOf(sim);
+  expect(surf, 'a course is being laid').not.toBeNull();
+  expect(await shared.page.evaluate(() => !!__khufu.bubble.surf), 'the page stands gangs on it').toBe(true);
+  // some of them are up on stones already set
+  let up = 0;
+  for (const g of Object.values(model(t))) for (const p of g.people) if (Math.abs(p[1] - surf.y0 - surf.h) < 0.02 && Math.max(Math.abs(p[0]), Math.abs(p[2])) < surf.hw) up++;
+  expect(up, 'people standing on set stones').toBeGreaterThan(0);
+});
 
 test('after seeking away and back, every gang is drawn where it was', async () => {
   const { page } = shared;
@@ -129,7 +145,8 @@ for (const speed of [1, 4]) {
     const r = await page.evaluate((speed) => __khufu.checkMotion({ speed, seconds: 4, step: 0.05 }), speed);
     console.log(JSON.stringify(r));
     expect(t0).toBeLessThan(end);
-    expect(r.t, 'played up to the set').toBe(end);
+    expect(r.t, 'played across the set (the timeline runs on while the access stair is built)').toBeCloseTo(t0 + seconds * speed, 3);
+    expect(r.t).toBeGreaterThan(end);
     expect(r.inDetail, 'the capstone gang in the bubble after the set').toContain(capGang);
     expect(r.replies).toBeGreaterThan(20);
     expect(r.jumps, `worst ${JSON.stringify(r.worst)}`).toBe(0);

@@ -4,7 +4,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { CSS2DRenderer, CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js';
-import { HALF, HEIGHT, PAVEMENT, COURSES, COURSE_COUNT, ELEMENTS, SPOTS, groundHeight, floorY, ceilY } from './data.js';
+import { HALF, HEIGHT, PAVEMENT, COURSES, COURSE_COUNT, ELEMENTS, SPOTS, ENTRANCE_Y, groundHeight, floorY, ceilY } from './data.js';
 import { buildTextures, TX } from './textures.js';
 import { Monument } from './monument.js';
 import { Rooms } from './rooms.js';
@@ -14,7 +14,7 @@ import { WorkingCourse } from './working.js';
 import { Bubble } from './bubble.js';
 import { SLED, FIG } from './sim/gangs.js';
 import { SpecialWorks } from './works.js';
-import { TUNNEL } from './sim/works.js';
+import { TUNNEL, stairAt } from './sim/works.js';
 import { SimClient, Timeline, clockText } from './timeline.js';
 import { THEORY_IDS } from './sim/ramps/index.js';
 import { StatsPanel } from './statsPanel.js';
@@ -335,13 +335,20 @@ function setCourses(n, capstone = true) {
   $('courseLabel').textContent = monument.complete ? `all ${COURSE_COUNT}` : `${monument.built} · ${top.toFixed(1)} m`;
   if (!slider.matches(':active')) slider.value = monument.built;
 }
+// the access stair, built after the capstone (stairAt in sim/works.js): drawn and walked on
+// up to the height it has reached
+function setStair(t) {
+  const y = !monument.complete ? 0 : works.W ? stairAt(works.W, t) : ENTRANCE_Y;
+  monument.setStair(y);
+  collision.stairY = y >= ENTRANCE_Y ? Infinity : y; // (finished: its rails stand above the top steps too)
+}
 // Before the model has run the slider cuts the static monument; after, it jumps the timeline
 // to the moment that course was finished.
 slider.addEventListener('input', () => {
   const n = +slider.value;
   if (!timeline.ready) { setCourses(n); return; }
   const S = client.summary;
-  timeline.seek(n >= COURSE_COUNT ? S.endT : S.courseDone[n - 1]);
+  timeline.seek(n >= COURSE_COUNT ? S.finishT : S.courseDone[n - 1]);
 });
 setCourses(+(params.get('courses') || COURSE_COUNT));
 slider.value = monument.built;
@@ -360,11 +367,11 @@ const client = new SimClient({
     works.setSchedule(summary.works);
     const restarted = timeline.ready; // the worker was restarted after a crash: stay where we were
     timeline.setRun(summary);
-    let t = summary.endT; // by default, the finished monument (as before the model has run)
+    let t = summary.finishT; // by default, the finished monument and its stair (as before the model has run)
     if (restarted) t = timeline.t;
     else if (params.has('day')) t = (+params.get('day') - 1) * DAY;
     else if (params.has('year')) t = (+params.get('year') - 1) * YEAR;
-    else if (params.has('courses')) { const n = +params.get('courses'); t = n >= COURSE_COUNT ? summary.endT : summary.courseDone[Math.max(0, n - 1)]; }
+    else if (params.has('courses')) { const n = +params.get('courses'); t = n >= COURSE_COUNT ? summary.finishT : summary.courseDone[Math.max(0, n - 1)]; }
     timeline.seek(t);
     if (params.has('play') && !restarted) timeline.setPlaying(true);
     $('tour').disabled = false;
@@ -375,6 +382,9 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
+    working.setStones(view.stones);
+    bubble.setCourse(working.layout, view.course); // (gangs walk on the stones as drawn)
+    monument.setHoles(working.layout?.y0, view.course && working.layout?.ci === view.course.ci ? working.layout.trench : null); // (an internal ramp's trench)
     applyReveal();
     if (m.gangs) bubble.apply(m.gangs);
     bubble.setVisible(!view.done);
@@ -465,7 +475,7 @@ window.__khufu = {
   benchSeek: async (days) => {
     const out = [];
     for (const d of days) {
-      const t = Math.max(0, Math.min(client.summary.endT, d * DAY));
+      const t = Math.max(0, Math.min(client.summary.finishT, d * DAY));
       timeline.t = t; timeline.render();
       const a = performance.now();
       const r = await client.seekAndWait(t);
@@ -502,12 +512,14 @@ window.__khufu = {
     for (let k = 0; k < seconds / step; k++) {
       timeline.seek(Math.min(timeline.end, timeline.t + step * speed));
       await new Promise((r) => setTimeout(r, step * 1000));
-      const t = timeline.t;
+      // (the gangs' time stands still at the end of the build, as the model's does: the
+      // timeline runs on past it while the access stair is built, with the gangs not drawn)
+      const t = Math.min(timeline.t, client.summary.endT);
       bubble.update(t, camera, step);
       steps++;
       for (const g of bubble.inside) {
         const o = bubble.bufs[g], p = prev.get(g);
-        // (also at the same time: at the end of the timeline time stands still, and a trip
+        // (also at the same time: at the end of the build time stands still, and a trip
         // that arrives a step late must still put everyone where they were)
         if (p && p.t <= t && p.o.length === o.length) {
           const dt = t - p.t;
@@ -547,9 +559,11 @@ function frame() {
   if (window.__khufu.hold) { clock.getDelta(); requestAnimationFrame(frame); return; }
   const dt = Math.min(clock.getDelta(), 0.1);
   if (tour.active) tour.update(dt); else timeline.tick(dt);
+  if (timeline.ready) working.frame(timeline.t); // (stones at the landings and on their way)
   if (timeline.ready && bubble.visible && !(tour.active && tour.drewBubble)) bubble.update(timeline.t, camera, dt);
   // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
   if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled, camera); if (tn) { tunnelNow = tn; applyReveal(); } }
+  if (timeline.ready) setStair(timeline.t);
   // a followed levy gang that goes home hands the camera to the working gang nearest the view
   if (follow >= 0 && !walker.enabled && bubble.trips[follow]?.away) { follow = bubble.nearestGang(orbit.target); if (follow >= 0) bubble.sledAt(follow, followAt); else $('follow').classList.remove('on'); }
   if (follow >= 0 && !walker.enabled && bubble.sledAt(follow, followNow)) {

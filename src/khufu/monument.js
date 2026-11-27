@@ -7,7 +7,7 @@
 // - Far away, everything is swapped for a four-triangle hull whose texture carries every
 //   course line.
 import * as THREE from 'three';
-import { COURSES, COURSE_COUNT, HALF, HEIGHT, TAN, halfWidthAt, ELEMENTS, STAIR, ENTRANCE_Y, ENTRANCE_Z } from './data.js';
+import { COURSES, COURSE_COUNT, HALF, HEIGHT, TAN, halfWidthAt, ELEMENTS, STAIR, ENTRANCE_Y } from './data.js';
 import { newell, sectionAt } from './geom.js';
 import { TX } from './textures.js';
 
@@ -93,9 +93,14 @@ function buildCourses(holes) {
 // With yBed (the bed of that course), also every room that reaches up into the course: a
 // chamber whose top lies just under the next course stays open from above until its roof
 // beams are set (the King's Chamber, the relieving chambers).
-export function capGeometry(y, yBed = y) {
+// extra: more openings [x0, x1, z0, z1] (the trench of a ramp inside the masonry).
+export function capGeometry(y, yBed = y, extra = []) {
   const hw = halfWidthAt(y);
   const rects = [];
+  for (const [x0, x1, z0, z1] of extra) {
+    const r = { x0: Math.max(-hw, x0), x1: Math.min(hw, x1), z0: Math.max(-hw, z0), z1: Math.min(hw, z1) };
+    if (r.x1 > r.x0 && r.z1 > r.z0) rects.push(r);
+  }
   for (const el of ELEMENTS) for (const v of el.voids) {
     // (a sloped void has a different section at each height: keep every one open)
     for (const yy of [y, (y + yBed) / 2, yBed + 0.01]) {
@@ -149,9 +154,9 @@ function pyramidGeometry(y0, y1, uvFor) {
   return g;
 }
 
-// A stone stair as one stepped profile (no overlapping boxes), with world-space UVs.
-function stairGeometry() {
-  const n = Math.round(ENTRANCE_Y / STAIR.rise), rise = ENTRANCE_Y / n, run = (STAIR.zTop - STAIR.zFoot) / n;
+// A stone stair as one stepped profile (no overlapping boxes), with world-space UVs, built
+// up to height yb (each column of the profile cut off there: the stair rises in layers).
+function stairGeometry(yb = ENTRANCE_Y) {
   const { x0, x1 } = STAIR;
   const pos = [], nor = [], uv = [];
   const quad = (pts, nrm) => {
@@ -167,8 +172,7 @@ function stairGeometry() {
     quad([[x0, 0, za], [x0, 0, zb], [x0, h, zb], [x0, h, za]], [-1, 0, 0]);
     quad([[x1, 0, za], [x1, h, za], [x1, h, zb], [x1, 0, zb]], [1, 0, 0]);
   };
-  for (let k = 0; k < n; k++) column(STAIR.zFoot + k * run, STAIR.zFoot + (k + 1) * run, (k + 1) * rise);
-  column(STAIR.zTop, ENTRANCE_Z + 0.02, ENTRANCE_Y); // landing at the sill
+  for (const [za, zb, h] of STAIR.columns) if (yb > 0) column(za, zb, Math.min(h, yb));
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
@@ -203,6 +207,7 @@ export class Monument {
     this.cap = new THREE.Mesh(new THREE.BufferGeometry(), this.mats.cap);
     this.cap.receiveShadow = true; this.cap.castShadow = true; this.cap.visible = false; this.cap.name = 'cap';
     this.group.add(this.cap);
+    this.stairY = ENTRANCE_Y; // (the finished stair until the timeline says otherwise)
     this.stair = new THREE.Mesh(stairGeometry(), this.mats.stair);
     this.stair.castShadow = true; this.stair.receiveShadow = true; this.stair.name = 'stair';
     this.group.add(this.stair);
@@ -233,9 +238,22 @@ export class Monument {
     this.built = n; this.capstone = capstone;
     if (!changed) return this.topY();
     this.courses.geometry.setDrawRange(0, n > 0 ? this.ends[n - 1] : 0);
-    if (n > 0 && !this.complete) { this.cap.geometry.dispose(); this.cap.geometry = capGeometry(COURSES[n - 1].y1, COURSES[n - 1].y0); }
+    if (n > 0 && !this.complete) this.rebuildCap();
     this.updateVisibility();
     return this.topY();
+  }
+  rebuildCap() {
+    const n = this.built, y = COURSES[n - 1].y1;
+    this.cap.geometry.dispose();
+    this.cap.geometry = capGeometry(y, COURSES[n - 1].y0, this.holes && Math.abs(this.holes.y - y) < 1e-6 ? this.holes.rects : []);
+  }
+  // openings in the top of the built courses, when that top is at height y (the trench of a
+  // ramp inside the masonry where it comes up to the course being laid: rampTrench())
+  setHoles(y, rects) {
+    const sig = rects && rects.length ? `${y}:${rects.flat().map((v) => v.toFixed(2)).join(',')}` : '';
+    if (sig === (this.holesSig || '')) return;
+    this.holesSig = sig; this.holes = sig ? { y, rects } : null;
+    if (this.built > 0 && !this.complete) this.rebuildCap();
   }
   get complete() { return this.built === COURSE_COUNT && this.capstone; }
   topY() { return this.complete ? HEIGHT : this.built > 0 ? COURSES[this.built - 1].y1 : 0; }
@@ -255,6 +273,17 @@ export class Monument {
     this.courses.visible = !this.hull.visible;
     this.pyramidion.visible = complete && !this.hull.visible;
     this.cap.visible = this.built > 0 && !complete;
+    // (the access stair is built after the capstone, once the ramps are down: setStair)
+    this.stair.visible = complete && this.stairY > 0;
+  }
+
+  // the access stair built up to height y (0: not begun; ENTRANCE_Y: finished)
+  setStair(y) {
+    if (y === this.stairY) return;
+    this.stairY = y;
+    this.stair.geometry.dispose();
+    this.stair.geometry = stairGeometry(y);
+    this.updateVisibility();
   }
 
   setXray(on) {

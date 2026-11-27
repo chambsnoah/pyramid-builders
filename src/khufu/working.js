@@ -8,6 +8,7 @@
 // up to gClaim[s] / tClaim[s] are being set (see courseLayout() and viewState() in sim/view.js).
 import * as THREE from 'three';
 import { ELEM, HV } from './sim/planner.js';
+import { rampOpening, stoneEntries, stoneAt } from './sim/gangs.js';
 
 const CASING = 2, DRESSED = 3; // cell types from sim/planner.js
 const C = {
@@ -51,7 +52,7 @@ export class WorkingCourse {
     // nothing set or claimed since the last update (playing slowly): keep the instances
     let a = 0, b = 0;
     for (let s = 0; s < L.sectors; s++) { a += course.gSet[s] + course.tSet[s]; b += course.gClaim[s] + course.tClaim[s]; }
-    const sig = `${L.ci}:${a}:${b}:${course.heavyState.join('')}`;
+    const sig = `${L.ci}:${a}:${b}:${course.heavyState.join('')}:${(course.work || []).map((w) => w.join(',')).join(';')}`;
     if (sig === this.sig) return;
     this.sig = sig;
     const M = this.mesh.instanceMatrix.array, Cc = this.mesh.instanceColor.array;
@@ -68,16 +69,18 @@ export class WorkingCourse {
       Cc[k * 3] = col.r * v; Cc[k * 3 + 1] = col.g * v; Cc[k * 3 + 2] = col.b * v;
       k++;
     };
-    const run = (start, set, claim) => {
+    // (a stone a crew is still moving or fitting is drawn by the stones layer: setStones)
+    const work = new Set((course.work || []).map(([s, k, i]) => `${s}:${k}:${i}`));
+    const run = (start, claim, s, kind) => {
       for (let j = 0; j < claim; j++) {
         const i = cells[start + j], tp = type[start + j];
-        put(-hw + ((i % n) + 0.5) * cell, -hw + (((i / n) | 0) + 0.5) * cell,
-          j >= set ? C.setting : tp === CASING ? C.casing : tp === DRESSED ? C.dressed : C.core, i);
+        if (rampOpening(L, i) || work.has(`${s}:${kind}:${j}`)) continue; // (the way in from a ramp stays open until the course is done)
+        put(-hw + ((i % n) + 0.5) * cell, -hw + (((i / n) | 0) + 0.5) * cell, tp === CASING ? C.casing : tp === DRESSED ? C.dressed : C.core, i);
       }
     };
     for (let s = 0; s < L.sectors; s++) {
-      run(off[2 * s], course.gSet[s], course.gClaim[s]);
-      run(off[2 * s + 1], course.tSet[s], course.tClaim[s]);
+      run(off[2 * s], course.gClaim[s], s, 0);
+      run(off[2 * s + 1], course.tClaim[s], s, 1);
     }
     // heavy items: granite lining blocks, and roof beams lying across their openings on
     // both walls (as big as the gang carried them: the span plus a bearing at each end)
@@ -90,6 +93,52 @@ export class WorkingCourse {
     this.rise(course);
     this.mesh.count = k; this.count = k;
     this.mesh.instanceMatrix.needsUpdate = true; this.mesh.instanceColor.needsUpdate = true;
+  }
+
+  // The stones lying at the landings and those being moved to their places (stonesView() in
+  // sim/view.js, from the worker), placed at time t (stoneAt() in sim/gangs.js). All of them
+  // are written when the view changes (or time goes back); after that, every frame, only those
+  // still moving (most lie still on their piles).
+  setStones(v) {
+    if (v === this.stonesView) return;
+    this.stonesView = v; this.entries = v ? stoneEntries(v) : []; this.full = true;
+  }
+  frame(t) {
+    const v = this.stonesView, E = this.entries || [];
+    if (!v || t < v.t - 1e-6) { if (this.stones) this.stones.count = 0; return; }
+    if (!this.stones || this.stones.instanceMatrix.count < E.length) {
+      if (this.stones) { this.scene.remove(this.stones); this.stones.dispose(); }
+      this.stones = new THREE.InstancedMesh(this.geo, this.mat, Math.max(64, Math.ceil(E.length * 1.5)));
+      this.stones.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.stones.instanceMatrix.count * 3), 3);
+      this.stones.castShadow = !this.xray; this.stones.receiveShadow = true; this.stones.frustumCulled = false; this.stones.name = 'stones';
+      this.scene.add(this.stones);
+      this.full = true;
+    }
+    const full = this.full || t < (this.stonesT ?? -Infinity);
+    const M = this.stones.instanceMatrix.array, Cc = this.stones.instanceColor.array, o = this.so || (this.so = new Float32Array(8));
+    const put = (k) => {
+      const still = stoneAt(v, E[k], t, o), m = k * 16;
+      M.fill(0, m, m + 16);
+      M[m] = o[3]; M[m + 5] = o[4]; M[m + 10] = o[5]; M[m + 12] = o[0]; M[m + 13] = o[1]; M[m + 14] = o[2]; M[m + 15] = 1;
+      const col = o[6] === 2 ? C.setting : o[7] === 1 ? C.casing : C.core;
+      Cc[k * 3] = col.r; Cc[k * 3 + 1] = col.g; Cc[k * 3 + 2] = col.b;
+      return still;
+    };
+    const IM = this.stones.instanceMatrix, IC = this.stones.instanceColor;
+    if (full) {
+      this.moving = [];
+      for (let k = 0; k < E.length; k++) if (put(k) > t) this.moving.push(k);
+      IM.clearUpdateRanges(); IC.clearUpdateRanges();
+      IM.needsUpdate = true; IC.needsUpdate = true;
+    } else if (this.moving.length) {
+      // (only the stones still moving are sent again)
+      IM.clearUpdateRanges(); IC.clearUpdateRanges();
+      for (const k of this.moving) { IM.addUpdateRange(k * 16, 16); IC.addUpdateRange(k * 3, 3); }
+      this.moving = this.moving.filter((k) => put(k) > t);
+      IM.needsUpdate = true; IC.needsUpdate = true;
+    }
+    this.full = false; this.stonesT = t;
+    this.stones.count = E.length;
   }
 
   // How far each room's lining has risen in the course being laid: the share of that room's
@@ -115,6 +164,7 @@ export class WorkingCourse {
     const m = this.mat;
     m.transparent = on; m.opacity = on ? 0.16 : 1; m.depthWrite = !on; m.needsUpdate = true;
     if (this.mesh) this.mesh.castShadow = !on;
+    if (this.stones) this.stones.castShadow = !on;
   }
 }
 
