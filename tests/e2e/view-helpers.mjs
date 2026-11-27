@@ -2,7 +2,8 @@
 import { seekTo } from './fixtures.mjs';
 
 export const DAY = 36000;
-// name, working day, camera: either [x, y, z, tx, ty, tz] or { gangNear: [x, z], dist, height }
+// name, working day ('end': the capstone set; with `before`, that many seconds earlier),
+// camera: either [x, y, z, tx, ty, tz] or { gangNear: [x, z], dist, height }
 // (the camera put `dist` m south-east of the working gang nearest that point, looking at it)
 export const VIEWS = [
   { name: 'year-5-overview', day: 1500, cam: [260, 170, 320, 0, 20, 0] },
@@ -17,7 +18,7 @@ export const VIEWS = [
 // still (gangs placed at the view's time, dt 0)
 export async function showView(page, v) {
   await page.evaluate(() => { __khufu.hold = false; });
-  const t = v.day === 'end' ? await page.evaluate(() => __khufu.summary.endT) : v.day * DAY;
+  const t = v.day === 'end' ? (await page.evaluate(() => __khufu.summary.endT)) - (v.before || 0) : v.day * DAY;
   await seekTo(page, t);
   await page.evaluate(({ v, t }) => {
     const K = __khufu;

@@ -3,14 +3,20 @@
 // playing (checkMotion: no jumps). The model side is checked by `npm run khufu:gangs`.
 import { test, expect, seekTo, sharedPage } from './fixtures.mjs';
 import { VIEWS, showView, DAY } from './view-helpers.mjs';
-import { runFull } from '../../src/khufu/sim/index.js';
+import { runFull, T, NT, HEAVY } from '../../src/khufu/sim/index.js';
 import { seeker } from '../../src/khufu/sim/view.js';
 import { gangTracker, figures, crewSpec, SLED, FIG } from '../../src/khufu/sim/gangs.js';
 
 test.describe.configure({ mode: 'serial' });
 const shared = sharedPage(test);
-let at;
-test.beforeAll(() => { at = seeker(runFull({ seed: 1 })); });
+let at, end, capGang;
+test.beforeAll(() => {
+  const run = runFull({ seed: 1 });
+  at = seeker(run); end = run.sim.t;
+  // the heavy gang that sets the capstone: its stone is set at the very end of the build
+  const G = run.sim.state.gang;
+  capGang = G.kind.findIndex((k, g) => k === HEAVY && G.t[g * NT + T.DONE] === end);
+});
 
 // what the page draws for every gang now: its token (the sled's instance matrix), the
 // articulated workers of the gangs in the bubble and the simple figures of the others
@@ -45,34 +51,38 @@ function model(t) {
 }
 const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
+// every gang drawn where the model puts it at view v, its workers inside the bubble, and the
+// people of gang g0 (by default the first in the bubble) as simple figures once it leaves it
+async function matchModel(v, { minInside = 2, g0 = null } = {}) {
+  const { page } = shared;
+  const t = await showView(page, v);
+  const want = model(t), got = await drawn();
+  const gangs = Object.keys(want);
+  expect(gangs.length).toBeGreaterThan(40);
+  expect(Object.keys(got.tokens).sort()).toEqual(gangs.sort());
+  expect(got.sleds.drawn, 'one sled instance drawn for each gang on site').toBe(got.sleds.gangs);
+  for (const g of gangs) expect(dist(got.tokens[g], want[g].sled), `gang ${g}: the drawn sled`).toBeLessThan(1e-3);
+  expect(got.inside.length).toBeGreaterThanOrEqual(minInside);
+  for (const g of got.inside) got.people[g].forEach((p, j) => expect(dist(p, want[g].people[j]), `gang ${g} worker ${j} (articulated)`).toBeLessThan(1e-3));
+  // move back until a gang in the bubble leaves it: its people are now simple figures, at the same places
+  if (g0 === null) g0 = got.inside[0];
+  expect(got.inside, `gang ${g0} in the bubble`).toContain(g0);
+  await page.evaluate(({ t, g0 }) => {
+    const K = __khufu, B = K.bubble, s = B.sledAt(g0, new K.THREE.Vector3());
+    const away = K.camera.position.clone().sub(s).setY(0).normalize();
+    for (let d = 60; d < 600 && B.inside.has(g0); d += 20) { K.view(s.x + away.x * d, s.y + 30, s.z + away.z * d, s.x, s.y, s.z); B.update(t, K.camera, 0); }
+  }, { t, g0 });
+  const out = await drawn();
+  expect(out.inside, `gang ${g0} left the bubble`).not.toContain(g0);
+  for (const p of want[g0].people) {
+    const q = [p[0], p[1] - (p[3] === 6 ? 0.4 : 0), p[2]]; // (kneeling figures are drawn lower)
+    const near = Math.min(...out.far.map((f) => dist(f, q)));
+    expect(near, `gang ${g0}: a simple figure where each worker stood`).toBeLessThan(1e-3);
+  }
+}
 const V = Object.fromEntries(VIEWS.map((v) => [v.name, v]));
 for (const v of [V['quarry-gangs'], V['zigzag-gangs']]) {
-  test(`tokens and workers match the model, inside and outside the bubble (${v.name})`, async () => {
-    const { page } = shared;
-    const t = await showView(page, v);
-    const want = model(t), got = await drawn();
-    const gangs = Object.keys(want);
-    expect(gangs.length).toBeGreaterThan(40);
-    expect(Object.keys(got.tokens).sort()).toEqual(gangs.sort());
-    expect(got.sleds.drawn, 'one sled instance drawn for each gang on site').toBe(got.sleds.gangs);
-    for (const g of gangs) expect(dist(got.tokens[g], want[g].sled), `gang ${g}: the drawn sled`).toBeLessThan(1e-3);
-    expect(got.inside.length).toBeGreaterThan(1);
-    for (const g of got.inside) got.people[g].forEach((p, j) => expect(dist(p, want[g].people[j]), `gang ${g} worker ${j} (articulated)`).toBeLessThan(1e-3));
-    // move back until a gang in the bubble leaves it: its people are now simple figures, at the same places
-    const g0 = got.inside[0];
-    await page.evaluate(({ t, g0 }) => {
-      const K = __khufu, B = K.bubble, s = B.sledAt(g0, new K.THREE.Vector3());
-      const away = K.camera.position.clone().sub(s).setY(0).normalize();
-      for (let d = 60; d < 600 && B.inside.has(g0); d += 20) { K.view(s.x + away.x * d, s.y + 30, s.z + away.z * d, s.x, s.y, s.z); B.update(t, K.camera, 0); }
-    }, { t, g0 });
-    const out = await drawn();
-    expect(out.inside, `gang ${g0} left the bubble`).not.toContain(g0);
-    for (const p of want[g0].people) {
-      const q = [p[0], p[1] - (p[3] === 6 ? 0.4 : 0), p[2]]; // (kneeling figures are drawn lower)
-      const near = Math.min(...out.far.map((f) => dist(f, q)));
-      expect(near, `gang ${g0}: a simple figure where each worker stood`).toBeLessThan(1e-3);
-    }
-  });
+  test(`tokens and workers match the model, inside and outside the bubble (${v.name})`, () => matchModel(v));
 }
 
 test('after seeking away and back, every gang is drawn where it was', async () => {
@@ -90,8 +100,7 @@ test('after seeking away and back, every gang is drawn where it was', async () =
 });
 
 // playing through the worker at 1× and at 4×, at each view and right after a seek: nobody in
-// the bubble moves faster than a run between two steps. (Kept before the capstone is set:
-// its gang's return path jumps then, a known gap hidden in the page.)
+// the bubble moves faster than a run between two steps
 for (const [v, speed] of [[V['quarry-gangs'], 1], [V['zigzag-gangs'], 1], [V['zigzag-gangs'], 4]]) {
   test(`no jumps while playing at ${speed}× (${v.name})`, async () => {
     const { page } = shared;
@@ -103,3 +112,27 @@ for (const [v, speed] of [[V['quarry-gangs'], 1], [V['zigzag-gangs'], 1], [V['zi
     expect(r.jumps, `worst ${JSON.stringify(r.worst)}`).toBe(0);
   });
 }
+
+// The capstone set ends the build. The capstone gang, still on the top, is sent a new trip for
+// its walk home at that moment (the model is done): it must go on from where it stood, with
+// the camera beside it, played across the moment at 1× and 4× (half the time before it, half
+// at the end, where a trip arriving a step late is compared too), and drawn where the model
+// puts it, inside and outside the bubble, once it is set.
+const capstone = (before = 0) => ({ name: 'capstone', day: 'end', before, cam: { gangNear: [0, 0], dist: 30, height: 15 } });
+for (const speed of [1, 4]) {
+  test(`no jumps across the capstone set at ${speed}×`, async () => {
+    const { page } = shared;
+    expect(capGang, 'the capstone gang').toBeGreaterThanOrEqual(0);
+    const seconds = 4;
+    const t0 = await showView(page, capstone((seconds * speed) / 2));
+    expect(await page.evaluate(() => [...__khufu.bubble.inside]), 'the capstone gang in the bubble before the set').toContain(capGang);
+    const r = await page.evaluate((speed) => __khufu.checkMotion({ speed, seconds: 4, step: 0.05 }), speed);
+    console.log(JSON.stringify(r));
+    expect(t0).toBeLessThan(end);
+    expect(r.t, 'played up to the set').toBe(end);
+    expect(r.inDetail, 'the capstone gang in the bubble after the set').toContain(capGang);
+    expect(r.replies).toBeGreaterThan(20);
+    expect(r.jumps, `worst ${JSON.stringify(r.worst)}`).toBe(0);
+  });
+}
+test('once the capstone is set, its gang and every other is drawn where the model puts it', () => matchModel(capstone(), { minInside: 1, g0: capGang }));

@@ -507,11 +507,13 @@ window.__khufu = {
       steps++;
       for (const g of bubble.inside) {
         const o = bubble.bufs[g], p = prev.get(g);
-        if (p && p.t < t && p.o.length === o.length) {
+        // (also at the same time: at the end of the timeline time stands still, and a trip
+        // that arrives a step late must still put everyone where they were)
+        if (p && p.t <= t && p.o.length === o.length) {
           const dt = t - p.t;
           for (let i = 0; i < o.length; i = i ? i + FIG : SLED) {
             const d = Math.hypot(o[i] - p.o[i], o[i + 1] - p.o[i + 1], o[i + 2] - p.o[i + 2]);
-            const v = d / dt;
+            const v = d / Math.max(dt, step * speed);
             if (v > worst.v) worst = { v: +v.toFixed(2), d: +d.toFixed(3), g, i, t: +(t / DAY).toFixed(4), act: bubble.acts[g] };
             if (d > Math.max(0.5, 3 * dt)) jumps++;
           }
@@ -521,7 +523,7 @@ window.__khufu = {
     }
     replies = client.id - before;
     timeline.setPlaying(was);
-    return { speed, steps, replies, worst, jumps, gangsInDetail: bubble.inside.size, workers: bubble.info.workers };
+    return { speed, steps, replies, worst, jumps, gangsInDetail: bubble.inside.size, inDetail: [...bubble.inside], workers: bubble.info.workers, t: timeline.t };
   },
   setXray, setWalk, setCourses, sceneTriangles, syncBench, SPOTS, ELEMENTS, COURSES, SLED, FIG,
   get tour() { return tour; }, startTour, endTour,

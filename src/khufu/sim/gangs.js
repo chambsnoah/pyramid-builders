@@ -95,7 +95,12 @@ export function rampScene(sim) {
   const F = Math.max(hr + (R.straight.grade > 0 ? Y / R.straight.grade : 0), HALF + 3);
   const zw = R.zigzag.width;
   const plat = Math.min(zw / 2, (F - hr) / 2); // a flat landing at the top of each straight ramp
-  const built = S.done ? COURSES[LAST].y1 : COURSES[S.cur].y0; // top of the finished courses
+  // top of the finished courses, as the gangs walk on it. Once the capstone is set the build
+  // is done, but the capstone gang is still on the top and walks home down the same ramps:
+  // the ground its trip is built on (this, and the straight ramps in terrainY) stays as it
+  // stood when the capstone went up, so the trip the worker sends at that moment puts every
+  // man where the trip before it did. Only the drawing of the ramps goes (done).
+  const built = COURSES[S.cur].y0;
   return {
     key: `${look}:${Y.toFixed(2)}:${S.cur}:${S.done ? 1 : 0}`, look, done: S.done, top, sw, Y, hr, F, plat, built, w: R.straight.width,
     zw, zgrade: R.zigzag.grade, zig: !th.ledge && Number.isFinite(sw) && R.zigzag.grade > 0 ? zigCorners(sw, R.zigzag.grade) : null, // (a flat zigzag would never reach the top)
@@ -140,12 +145,12 @@ export function terrainY(R, x, z) {
   let y = groundHeight(x, z);
   const m = Math.max(Math.abs(x), Math.abs(z));
   if (m < HALF) y = Math.max(y, Math.min(R.built, TAN * (HALF - m)));
-  if (!R.done) for (let f = 0; f < 4; f++) { const w = wedgeY(R, f, x, z); if (w > y) y = w; }
+  for (let f = 0; f < 4; f++) { const w = wedgeY(R, f, x, z); if (w > y) y = w; } // (also once done: see rampScene)
   return y;
 }
 // axis-aligned boxes around the straight ramps, where the ground is not flat
 function wedgeBoxes(R) {
-  if (R.Y <= 0 || R.done) return [];
+  if (R.Y <= 0) return [];
   const half = R.w / 2 + R.Y + 1;
   return FACES.map(([n, t]) => {
     const r0 = R.hr - R.Y - 1, r1 = R.F + 1;
