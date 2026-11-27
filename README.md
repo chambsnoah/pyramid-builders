@@ -95,19 +95,32 @@ With the same quarries, the spiral keeps up with the default and needs a ninth o
 The worker sends each gang's current trip with every reply, but only when it has changed. A trip is a few 3D paths (yard, road, ramp, landing and back) and a list of knots taken from the model's events (`src/khufu/sim/gangs.js`). Every frame the page places the sled, the stone and each member of the crew as a pure function of the trip and the time (`src/khufu/bubble.js`). So a gang stands in the same place however it is drawn, and crossing the edge of the bubble only changes how much detail it has.
 
 - **Model times are kept:**
-  - The time a gang reaches each place where it waits or arrives comes from the model: the ramp foot, the top of the straight ramp and the landing.
+  - The time a gang reaches each place where it waits or arrives comes from the model: the ramp foot, the top of the ramp (straight, zigzag or ledge) and the landing.
   - The time in between is shared out over the drawn stretches by length and slope.
-  - Where the drawn ramp is longer than the model's (a course-0 ramp has no length in the model), a gang may reach the landing a little late, at no more than 30% above the model's speed. It still finishes unloading at the model's time.
+  - Where the drawn way is longer than the model's (a course-0 ramp has no length in the model; the zigzag ends at its corner, not at the model's head), a gang may reach the top a little early, or the landing a little late, at no more than 30% above the model's speed. It still finishes unloading at the model's time.
+  - The yards are not in the model: a gang walks from its spot to the gate in the last part of its loading time, and leaves the gate at the model's time.
 - **Queues:**
-  - Gangs queue one gang length apart at the ramp foot, the zigzag entry and each landing berth, and move up as the gang ahead leaves.
-  - Gangs climb in the ramp lane the model gave them, keep to the middle on the single-lane zigzag, and use two berths side by side at each landing.
+  - Gangs queue one gang length apart at the ramp foot, the zigzag entry and each landing berth, and move up as the gang ahead leaves (at the foot, once it has cleared the foot).
+  - Gangs climb in the ramp lane the model gave them, keep left on the single-lane zigzag (so one coming down passes one going up), and use two berths side by side at each landing.
 - **Ramps as drawn:**
-  - The straight ramps are raised in 2 cm lifts as each course is laid, so gangs on them never jump a course height.
-  - The zigzag is one fixed ledge per face up to the apex. Each switchback takes its share of the model's turning time.
-- **Known limitation:** the model lets a faster gang catch up with a slower one in the same lane, and two gangs can turn at the same switchback. They are then drawn overlapping, about 1% of the gangs at work at any moment. A queue for the zigzag longer than the straight ramp below it (up to about 50 gangs in Akhet of the last years) piles up at the foot of the straight ramp instead of reaching back down the road.
+  - The straight ramps are raised in 2 cm lifts as each course is laid, so gangs on them never jump a course height. Their sides are 1:1 down to the ground.
+  - Where a ramp (or a ledge) arrives, the outer ring of the course being laid is left open until the course is done, as if those stones were set last behind the ramp: the model sets each sector's stones farthest first, so they would otherwise stand across the way up.
+  - The internal ramp is a gallery with 3 m of masonry over it, but its last stretch, where it comes up to the course being laid, is drawn as a trench open to the sky: the top of the built courses is cut there, its walls go down to the ramp's floor, and the stones of the course being laid are left out over it (`rampTrench` in `sim/view.js`). Gangs on it are no longer drawn half in the masonry.
+  - The zigzag is one fixed ledge per face up to the apex. Each switchback is a short stop (30 s at most); the rest of the model's turning time is spent climbing more slowly. The model lets the next gang on a turning time behind, so a gang standing the whole of it at a corner would have the next one walk into it.
+- **Nobody walks through anything** (`npm run khufu:gangs`, section 5):
+  - Each man stands on the ground where he is (the plateau, a ramp's sides, the quay), not at the height of the middle of the way.
+  - On the course being laid people stand on the stones already set, and step down where none is yet (over 0.6 m at each stone's edge). The page builds that surface from the counts it draws the stones from (`courseSurface`).
+  - On the course a gang keeps its own width from the edge, and the two berths of a landing by the edge move over so both gangs stand on the course.
+  - At the landing the front ranks do not walk on into the sector's stones (or off the edge): they peel off to either side and stand back beside the sled.
+  - The yards have an avenue out from the gate and a cross-aisle in front of each row, and a spot is entered from behind, so no gang walks through another parked there.
+  - The model lets a faster gang catch up with a slower one. Where two in the same lane would come within a gang's length (on the road, in a yard's avenue, up a straight ramp or on the way home), the one that came along later steps out to an overtaking line 5.8 m left of the middle while they are side by side. The times come from the model, so a gang's trip only learns of gangs ahead of it.
+- **Known limitations:**
+  - Two gangs can still cross where a yard's aisle meets its avenue, or reach a ramp head side by side, at the same moment: about 44 pairs of people of two gangs closer than 0.4 m over 60 moments of the build (157,000 people placed).
+  - The spiral and the internal ramp have one lane for every gang. At its foot the queue keeps a place one gang length back while the gang ahead is still on its way there, so a gang can stand in the back of the one ahead for a moment: about 104 (spiral) and 149 (internal) such pairs over the same 60 moments. On the internal ramp, gangs coming down meet gangs going up in its 3 m gallery.
+  - A queue for the zigzag longer than the straight ramp below it (up to about 50 gangs in Akhet of the last years) piles up at the foot of the straight ramp instead of reaching back down the road. A queue for a single ramp lane reaching back past the yard keeps the gangs in their spots.
 
 ```bash
-npm run khufu:gangs   # continuity (nobody moves faster than a run between 1 s steps), model match, overlap
+npm run khufu:gangs   # continuity (nobody moves faster than a run between 1 s steps), model match, overlap, nobody walks through anything
 ```
 
 With the bubble full (74 gangs, 1,480 articulated workers), a frame takes 11 ms (p95 16 ms), 3.2 ms of it placing the gangs. That is at 2048×1536 on an Apple M3, measured with the GPU synced (`__khufu.benchFrames()`).
@@ -152,13 +165,13 @@ The first browser run needs `npx playwright install chromium`. Playwright serves
 
 | Layer | Tests | What they check |
 | --- | --- | --- |
-| Event model | `tests/unit/*.test.mjs`, the `khufu:*` scripts | The queue's order (ties in scheduling order, packing for snapshots), FIFO resources and `acquireAll`, the seeded random numbers, the planner (block count, casing ring, rooms open and lined, King's Chamber beams, every block in one sector, farthest-first), each ramp theory (routes climb to the course, fill grows, the model climbs the drawn path); then determinism, snapshots, seeks, gangs, works and theories |
+| Event model | `tests/unit/*.test.mjs`, the `khufu:*` scripts | The queue's order (ties in scheduling order, packing for snapshots), FIFO resources and `acquireAll`, the seeded random numbers, the planner (block count, casing ring, rooms open and lined, King's Chamber beams, every block in one sector, farthest-first), each ramp theory (routes climb to the course, fill grows, the model climbs the drawn path); then determinism, snapshots, seeks, gangs, works and theories. `khufu:gangs` also places every person at 60 moments and counts people of two gangs in one spot (at most 60 pairs, none at a switchback), in another gang's sled (at most 40), inside a stone already set (none), and in the air or in the ground (at most 0.1 %); with `-- --ramp spiral` or `internal`, at most 160 pairs, 180 in a sled, 2 at a switchback and 2 in a stone (see the known limitations) |
 | Pages | `tests/e2e/load.spec.mjs` | `index.html` and `khufu.html` (and `?ramp=spiral`, `?ramp=internal`) load and run, with no console error; each page links to the other. Every browser test fails on any console error or uncaught exception (`tests/e2e/fixtures.mjs`). |
 | Timeline | `tests/e2e/timeline.spec.mjs` | Scrubbing across the build, back and forth; the statistics panel (blocks, course, workforce, gangs, quarry yard, queues) matches the event model run in Node at the same time; day and month steps, the arrow keys and the milestone marks; play, pause and playing into the end |
 | Tours | `tests/e2e/tours.spec.mjs` | The small pyramid's tour plays every shot (at 8× speed, `window.__tour.speed`). Khufu's tour, default and spiral, driven frame by frame: every stop, the capstone close-up, all seven walk legs, the closing circle, then the controls handed back; Esc and **End tour** stop it |
 | Walking | `tests/e2e/walking.spec.mjs` | From each "Walk to" spot into every room (descending and ascending passages, subterranean, Queen's Chamber, Grand Gallery, antechamber, King's Chamber): the real walker on a waypoint graph (`walk-helpers.mjs`), pressing Space at the climb prompts |
 | Rendering | `tests/e2e/rendering.spec.mjs` | Six fixed views on fixed days against the pictures in `tests/e2e/__screenshots__` (each view is checked even when one before it fails); frame-time budgets with the bubble full (`__khufu.benchFrames`; `KHUFU_FRAME_BUDGET_MS`, `KHUFU_PLACE_BUDGET_MS`) |
-| Detail bubble | `tests/e2e/bubble.spec.mjs` | Every sled and worker the page draws is where the model run in Node puts it, inside the bubble and as a simple figure once its gang leaves it; the same after seeking away and back; no jumps while playing at 1× and 4× (`__khufu.checkMotion`), at two views and across the capstone set, when the capstone gang starts its walk home; at the end, the capstone gang and every other drawn where the model puts it |
+| Detail bubble | `tests/e2e/bubble.spec.mjs` | Every sled and worker the page draws is where the model run in Node puts it, inside the bubble and as a simple figure once its gang leaves it; the same after seeking away and back; no jumps while playing at 1× and 4× (`__khufu.checkMotion`), at two views and across the capstone set, when the capstone gang starts its walk home; at the end, the capstone gang and every other drawn where the model puts it; at a landing on the course being laid, people stand on its stones where the model puts them |
 
 To drive frames from a test, set `__khufu.hold = true`: the page's frame loop then stands aside.
 
