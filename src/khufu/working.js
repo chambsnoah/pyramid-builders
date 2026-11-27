@@ -8,7 +8,7 @@
 // up to gClaim[s] / tClaim[s] are being set (see courseLayout() and viewState() in sim/view.js).
 import * as THREE from 'three';
 import { ELEM, HV } from './sim/planner.js';
-import { rampOpening, stonesAt } from './sim/gangs.js';
+import { rampOpening, stoneEntries, stoneAt } from './sim/gangs.js';
 
 const CASING = 2, DRESSED = 3; // cell types from sim/planner.js
 const C = {
@@ -96,32 +96,49 @@ export class WorkingCourse {
   }
 
   // The stones lying at the landings and those being moved to their places (stonesView() in
-  // sim/view.js, from the worker), placed at time t every frame (stonesAt() in sim/gangs.js).
-  setStones(v) { this.stonesView = v; }
+  // sim/view.js, from the worker), placed at time t (stoneAt() in sim/gangs.js). All of them
+  // are written when the view changes (or time goes back); after that, every frame, only those
+  // still moving (most lie still on their piles).
+  setStones(v) {
+    if (v === this.stonesView) return;
+    this.stonesView = v; this.entries = v ? stoneEntries(v) : []; this.full = true;
+  }
   frame(t) {
-    const v = this.stonesView;
-    let k = 0;
-    if (v && t >= v.t - 1e-6) {
-      let cap = v.work.length;
-      for (const P of v.piles) cap += P.gn + P.tn;
-      if (!this.stones || this.stones.instanceMatrix.count < cap) {
-        if (this.stones) { this.scene.remove(this.stones); this.stones.dispose(); }
-        this.stones = new THREE.InstancedMesh(this.geo, this.mat, Math.max(64, Math.ceil(cap * 1.5)));
-        this.stones.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.stones.instanceMatrix.count * 3), 3);
-        this.stones.castShadow = !this.xray; this.stones.receiveShadow = true; this.stones.frustumCulled = false; this.stones.name = 'stones';
-        this.scene.add(this.stones);
-      }
-      const M = this.stones.instanceMatrix.array, Cc = this.stones.instanceColor.array;
-      stonesAt(v, t, (x, y, z, sx, sy, sz, state, kind) => {
-        const o = k * 16;
-        M.fill(0, o, o + 16);
-        M[o] = sx; M[o + 5] = sy; M[o + 10] = sz; M[o + 12] = x; M[o + 13] = y; M[o + 14] = z; M[o + 15] = 1;
-        const col = state === 2 ? C.setting : kind === 1 ? C.casing : C.core;
-        Cc[k * 3] = col.r; Cc[k * 3 + 1] = col.g; Cc[k * 3 + 2] = col.b;
-        k++;
-      });
+    const v = this.stonesView, E = this.entries || [];
+    if (!v || t < v.t - 1e-6) { if (this.stones) this.stones.count = 0; return; }
+    if (!this.stones || this.stones.instanceMatrix.count < E.length) {
+      if (this.stones) { this.scene.remove(this.stones); this.stones.dispose(); }
+      this.stones = new THREE.InstancedMesh(this.geo, this.mat, Math.max(64, Math.ceil(E.length * 1.5)));
+      this.stones.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(this.stones.instanceMatrix.count * 3), 3);
+      this.stones.castShadow = !this.xray; this.stones.receiveShadow = true; this.stones.frustumCulled = false; this.stones.name = 'stones';
+      this.scene.add(this.stones);
+      this.full = true;
     }
-    if (this.stones) { this.stones.count = k; this.stones.instanceMatrix.needsUpdate = true; this.stones.instanceColor.needsUpdate = true; }
+    const full = this.full || t < (this.stonesT ?? -Infinity);
+    const M = this.stones.instanceMatrix.array, Cc = this.stones.instanceColor.array, o = this.so || (this.so = new Float32Array(8));
+    const put = (k) => {
+      const still = stoneAt(v, E[k], t, o), m = k * 16;
+      M.fill(0, m, m + 16);
+      M[m] = o[3]; M[m + 5] = o[4]; M[m + 10] = o[5]; M[m + 12] = o[0]; M[m + 13] = o[1]; M[m + 14] = o[2]; M[m + 15] = 1;
+      const col = o[6] === 2 ? C.setting : o[7] === 1 ? C.casing : C.core;
+      Cc[k * 3] = col.r; Cc[k * 3 + 1] = col.g; Cc[k * 3 + 2] = col.b;
+      return still;
+    };
+    const IM = this.stones.instanceMatrix, IC = this.stones.instanceColor;
+    if (full) {
+      this.moving = [];
+      for (let k = 0; k < E.length; k++) if (put(k) > t) this.moving.push(k);
+      IM.clearUpdateRanges(); IC.clearUpdateRanges();
+      IM.needsUpdate = true; IC.needsUpdate = true;
+    } else if (this.moving.length) {
+      // (only the stones still moving are sent again)
+      IM.clearUpdateRanges(); IC.clearUpdateRanges();
+      for (const k of this.moving) { IM.addUpdateRange(k * 16, 16); IC.addUpdateRange(k * 3, 3); }
+      this.moving = this.moving.filter((k) => put(k) > t);
+      IM.needsUpdate = true; IC.needsUpdate = true;
+    }
+    this.full = false; this.stonesT = t;
+    this.stones.count = E.length;
   }
 
   // How far each room's lining has risen in the course being laid: the share of that room's

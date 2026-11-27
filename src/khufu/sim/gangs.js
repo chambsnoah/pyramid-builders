@@ -366,6 +366,7 @@ function loadOf(plan, kind, sector) {
 const QV = 0.5; // m/s moving up in a queue
 const YARD_LANE = 1.8; // m to the left of a yard's cross-aisle
 const TURN_STOP = 30; // s stopped at each switchback, at most
+const HOLD_N = 6, HOLD_AT = 9.5; // a queue's holding area: gangs across, m from the road's middle (see figures)
 const QGAP = 2.5; // m between two gangs in a queue
 function gangLength(kind, crew, load) {
   const spec = crewSpec(kind, crew), lead = (load ? load[2] / 2 : 0.7) + (kind === HEAVY ? 1.6 : 0.9);
@@ -390,7 +391,9 @@ function queueIndex(sim, plans) {
     // it keep their places in it)
     add(foot, rt.segs[0].res, { h, at: G.t[tb + T.FOOT], from: G.t[tb + T.DEPART], out: known ? G.t[tb + T.CLIMB] + clear : Infinity, len, line: heavy ? -1 : h % 2 });
     if (!known) continue;
-    if (rt.segs.length > 1) add(zig, rt.segs[1].res, { h, at: G.t[tb + T.ARR1], serve: G.t[tb + T.ENT1], out: G.t[tb + T.ENT1], len });
+    // (counted from when it starts to climb: a gang ahead in the queue for the zigzag holds the
+    // ones behind it from there, not only once it reaches the top of the straight ramp)
+    if (rt.segs.length > 1) add(zig, rt.segs[1].res, { h, at: G.t[tb + T.ARR1], from: G.t[tb + T.CLIMB], serve: G.t[tb + T.ENT1], out: G.t[tb + T.ENT1], len });
     if (!heavy) add(land, `${c}:${G.sector[h]}:${G.berth[h]}`, { h, at: G.t[tb + T.LAND], serve: G.t[tb + T.UNLOAD], out: G.t[tb + T.DONE], len });
   }
   return { foot, zig, land, now };
@@ -850,7 +853,7 @@ export function prep(trip) {
   trip.paths.forEach((p, i) => { if (typeof p === 'number') lines[i] = new Line(reverse(trip.paths[p])); });
   const spec = crewSpec(trip.kind, trip.crew);
   const lead = (trip.load ? trip.load[2] / 2 : 0.7) + (trip.kind === HEAVY ? 1.6 : 0.9);
-  return (trip._prep = { lines, spec, lead, W: gangHalfWidth(trip.kind, trip.crew, trip.load) });
+  return (trip._prep = { lines, spec, lead, W: gangHalfWidth(trip.kind, trip.crew, trip.load), len: gangLength(trip.kind, trip.crew, trip.load) });
 }
 
 // Where the trip stands at time t: the knot interval and how far through it.
@@ -868,6 +871,9 @@ export function tokenAt(trip, t, out = {}) {
   out.s = out.blend ? out.sa : out.sa + (out.sb - out.sa) * out.a;
   out.v = !out.blend && t1 < Infinity && t1 > t0 ? (out.sb - out.sa) / (t1 - t0) : 0;
   // held back in a queue (see capOf)
+  // (extra: how much farther back the queue would hold the gang than it can go, where it stood
+  // when the queue reached it: see figures(), which stands it beside the line instead)
+  out.extra = 0;
   if (trip.caps && !out.blend) for (const cap of trip.caps) {
     if (t < cap.t0 || t >= cap.t1 || out.pa !== cap.li) continue;
     const lim = capLim(cap, t);
@@ -875,6 +881,7 @@ export function tokenAt(trip, t, out = {}) {
       out.v = Math.max(0, (capLim(cap, t + 0.5) - lim) / 0.5);
       out.s = lim;
       out.act = out.v > 0.01 ? ACT.HAUL : ACT.WAIT;
+      if (cap.lo != null && lim <= cap.lo + 1e-9) { const e = cap.lo - (cap.s - capBack(cap, t)); if (e > out.extra) { out.extra = e; out.extraT0 = cap.t0; } }
     }
   }
   return out;
@@ -1057,13 +1064,11 @@ export function stockSpot(plan, s) {
 }
 // where stone number `rank` of a pile (kind 0 Giza, 1 casing) rests: [x, y, z]. The piles
 // grow in rows away from the landing, PILE_W stones across on each side of its line, leaving
-// out any place off the bed of the course (near the top the courses are small).
-const slotCache = new Map();
+// out any place off the bed of the course (near the top the courses are small). (The places
+// are worked out once per pile, kept on it.)
 function pileSlot(P, kind, rank, out) {
-  const key = `${P.ci}:${P.s}:${kind}:${P.x}:${P.z}`;
-  let list = slotCache.get(key);
-  if (!list) { if (slotCache.size > 400) slotCache.clear(); slotCache.set(key, (list = { q: 0, xz: [] })); }
-  const need = Math.floor(rank / PILE_H), pitch = P.cell * 1.05, lim = P.hw - P.sw / 2 - 0.05;
+  const cache = P._slots || Object.defineProperty(P, '_slots', { value: [{ q: 0, xz: [] }, { q: 0, xz: [] }] })._slots;
+  const list = cache[kind], need = Math.floor(rank / PILE_H), pitch = P.cell * 1.05, lim = P.hw - P.sw / 2 - 0.05;
   while (list.xz.length <= 2 * need && list.q < 1e5) {
     const q = list.q++;
     const a = (kind === 0 ? -1 : 1) * (0.5 + (q % PILE_W)) * pitch, b = (1 + Math.floor(q / PILE_W)) * pitch;
@@ -1075,35 +1080,53 @@ function pileSlot(P, kind, rank, out) {
   return out;
 }
 const SA = [0, 0, 0];
-// where a pile stone delivered at td, resting at `rank`, is at time t (levered from the spot)
+// where a pile stone delivered at td, resting at `rank`, is at time t (levered from the spot);
+// returns the time it comes to rest
 function pileAt(P, kind, rank, td, t, out) {
   pileSlot(P, kind, rank, SA);
-  const d = Math.hypot(SA[0] - P.x, SA[2] - P.z), k = smooth((t - td) / Math.max(1, d / PILE_V));
+  const d = Math.hypot(SA[0] - P.x, SA[2] - P.z), T = Math.max(1, d / PILE_V), k = smooth((t - td) / T);
   out[0] = P.x + (SA[0] - P.x) * k; out[1] = P.y + P.sh / 2 + (SA[1] - P.y - P.sh / 2) * k; out[2] = P.z + (SA[2] - P.z) * k;
-  return out;
+  return td + T;
 }
-// Every stone lying at a landing or being moved at time t: calls fn(x, y, z, sx, sy, sz, state,
-// kind) with its centre and size (state 0 lying, 1 moving, 2 fitting in its place; kind 0 Giza
-// stone, 1 casing).
-// v: stonesView(); stones moved are for t at or after the view's time.
-export function stonesAt(v, t, fn) {
-  const C = [0, 0, 0];
-  for (const P of v.piles) {
+// Every stone lying at a landing or being moved, as entries of a view (stonesView()): pile
+// stones [0, pile, kind, rank, delivered] and stones being moved [1, work].
+export function stoneEntries(v) {
+  const out = [];
+  v.piles.forEach((P, pi) => {
     for (const kind of [0, 1]) {
       const n = kind ? P.tn : P.gn, tops = kind ? P.tTop : P.gTop; // (tops: delivery times of the top stones, the last first)
-      for (let r = 0; r < n; r++) {
-        const top = n - 1 - r, td = top < tops.length ? tops[top] : -Infinity;
-        pileAt(P, kind, r, td, t, C);
-        fn(C[0], C[1], C[2], P.sw, P.sh, P.sw, 0, kind);
-      }
+      for (let r = 0; r < n; r++) { const top = n - 1 - r; out.push([0, pi, kind, r, top < tops.length ? tops[top] : -Infinity]); }
     }
-  }
-  for (const W of v.work) {
-    const P = v.piles[W.pile];
-    pileAt(P, W.kind, W.rank, W.td, W.t0, C);
+  });
+  v.work.forEach((W, wi) => out.push([1, wi]));
+  return out;
+}
+const CS = [0, 0, 0];
+// Places entry e of view v at time t: out = [x, y, z, sx, sy, sz, state, kind] (its centre and
+// size; state 0 lying, 1 moving, 2 fitting in its place; kind 0 Giza stone, 1 casing). Returns
+// the time from which it stays where it is (until the view changes).
+export function stoneAt(v, e, t, out) {
+  let still;
+  if (e[0] === 0) {
+    const P = v.piles[e[1]];
+    still = pileAt(P, e[2], e[3], e[4], t, CS);
+    out[0] = CS[0]; out[1] = CS[1]; out[2] = CS[2]; out[6] = 0; out[7] = e[2];
+    out[3] = out[5] = P.sw; out[4] = P.sh;
+  } else {
+    const W = v.work[e[1]], P = v.piles[W.pile];
+    pileAt(P, W.kind, W.rank, W.td, W.t0, CS);
     const k = smooth((t - W.t0) / Math.max(1e-6, W.move));
-    fn(C[0] + (W.x - C[0]) * k, C[1] + (P.y + P.sh / 2 - C[1]) * k, C[2] + (W.z - C[2]) * k, P.sw, P.sh, P.sw, t >= W.t0 + W.move ? 2 : 1, W.kind);
+    out[0] = CS[0] + (W.x - CS[0]) * k; out[1] = CS[1] + (P.y + P.sh / 2 - CS[1]) * k; out[2] = CS[2] + (W.z - CS[2]) * k;
+    out[3] = out[5] = P.sw; out[4] = P.sh; out[6] = t >= W.t0 + W.move ? 2 : 1; out[7] = W.kind;
+    still = W.t0 + W.move;
   }
+  return still;
+}
+// Every stone lying at a landing or being moved at time t: calls fn(x, y, z, sx, sy, sz, state,
+// kind) for each (see stoneAt).
+export function stonesAt(v, t, fn) {
+  const o = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (const e of stoneEntries(v)) { stoneAt(v, e, t, o); fn(o[0], o[1], o[2], o[3], o[4], o[5], o[6], o[7]); }
 }
 
 // ---- the course being laid, as people walk on it ---------------------------------------
@@ -1184,7 +1207,32 @@ export function figures(trip, t, out, o = 0, surf = null) {
   const P = prep(trip), tok = tokenAt(trip, t, TOK);
   const n = P.spec.n, size = SLED + n * FIG;
   if (!tok.blend) {
+    // A queue longer than the way behind it (for the single zigzag above the top, up to 100
+    // gangs) cannot reach back past where a gang already stood: the gangs it holds there wait
+    // side by side, one row (a gang's width) out per gang length it would have held them back,
+    // and move over as the queue moves up.
+    // The holding area is a grid HOLD_N gangs across, beside the road clear of its lanes and
+    // the overtaking line, and as many rows back as it takes, filled to and fro (so a gang's
+    // place moves on smoothly as the queue moves up). A gang walks to its place at a walk from
+    // when the queue reaches it.
+    let hold = 0, back = 0;
+    if (tok.extra > 0) {
+      const q = tok.extra / P.len, m = Math.floor(q / HOLD_N), f = q - m * HOLD_N, row = 2 * P.W + 0.4;
+      const across = (m % 2 ? HOLD_N - f : f) * row, rows = (m + smooth(f - (HOLD_N - 1))) * P.len;
+      const w = smooth((t - tok.extraT0) / Math.max(10, (HOLD_AT + across + rows) / 0.35));
+      hold = ((HOLD_AT - (trip.lane || 0)) * smooth(q) + across) * w; back = rows * w; // (out of its lane over the first gang length)
+    }
     formation(trip, P, tok.pa, tok.s, tok.act, out, o, t, Math.abs(tok.v));
+    // (the grid is square with the way where the gang stopped: the whole gang is moved over and
+    // back in a straight line, not along the bends of the road)
+    if (hold || back) {
+      const yaw = P.lines[tok.pa].yaw(tok.s, 4), dx = Math.cos(yaw) * hold - Math.sin(yaw) * back, dz = -Math.sin(yaw) * hold - Math.cos(yaw) * back;
+      for (let i = o, e = o + size; i < e; i = i === o ? o + SLED : i + FIG) {
+        const x = out[i] + dx, z = out[i + 2] + dz;
+        if (trip.ground) out[i + 1] += terrainY(trip.ground, x, z) - terrainY(trip.ground, out[i], out[i + 2]);
+        out[i] = x; out[i + 2] = z;
+      }
+    }
   } else {
     // regrouping between two standing formations (loading, unloading, setting a heavy
     // stone): the sled turns in place and each man walks to his new spot at 1.2 m/s
