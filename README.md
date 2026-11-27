@@ -148,7 +148,7 @@ npm run test:e2e     # builds, then Playwright in headless Chromium (~6 min)
 npx playwright test rendering --update-snapshots   # refresh the reference pictures
 ```
 
-The first browser run needs `npx playwright install chromium`. Playwright serves the build with `vite preview` on port 5182, and WebGL runs on SwiftShader (software), so the pictures are the same on a laptop and on the CI runner.
+The first browser run needs `npx playwright install chromium`. Playwright serves the build with `vite preview` on port 5182, and WebGL runs on SwiftShader (software), so the pictures are the same on a laptop and on the CI runner up to rounding. A view fails when more than 0.1 % of its pixels differ by a colour distance over 0.02 (`playwright.config.mjs`). The quarry view, whose 1,180 workers move a little between runs, allows 0.2 % over 0.25 (`view-helpers.mjs`). With the casing tinted, five views fail. Keep `@playwright/test` at 1.52.0 for these pictures: another Chromium means new references.
 
 | Layer | Tests | What they check |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ The first browser run needs `npx playwright install chromium`. Playwright serves
 | Timeline | `tests/e2e/timeline.spec.mjs` | Scrubbing across the build, back and forth; the statistics panel (blocks, course, workforce, gangs, quarry yard, queues) matches the event model run in Node at the same time; day and month steps, the arrow keys and the milestone marks; play, pause and playing into the end |
 | Tours | `tests/e2e/tours.spec.mjs` | The small pyramid's tour plays every shot (at 8× speed, `window.__tour.speed`). Khufu's tour, default and spiral, driven frame by frame: every stop, the capstone close-up, all seven walk legs, the closing circle, then the controls handed back; Esc and **End tour** stop it |
 | Walking | `tests/e2e/walking.spec.mjs` | From each "Walk to" spot into every room (descending and ascending passages, subterranean, Queen's Chamber, Grand Gallery, antechamber, King's Chamber): the real walker on a waypoint graph (`walk-helpers.mjs`), pressing Space at the climb prompts |
-| Rendering | `tests/e2e/rendering.spec.mjs` | Five fixed views on fixed days against the pictures in `tests/e2e/__screenshots__`; frame-time budgets with the bubble full (`__khufu.benchFrames`; `KHUFU_FRAME_BUDGET_MS`, `KHUFU_PLACE_BUDGET_MS`) |
+| Rendering | `tests/e2e/rendering.spec.mjs` | Six fixed views on fixed days against the pictures in `tests/e2e/__screenshots__` (each view is checked even when one before it fails); frame-time budgets with the bubble full (`__khufu.benchFrames`; `KHUFU_FRAME_BUDGET_MS`, `KHUFU_PLACE_BUDGET_MS`) |
 | Detail bubble | `tests/e2e/bubble.spec.mjs` | Every sled and worker the page draws is where the model run in Node puts it, inside the bubble and as a simple figure once its gang leaves it; the same after seeking away and back; no jumps while playing at 1× and 4× (`__khufu.checkMotion`), at two views and across the capstone set, when the capstone gang starts its walk home; at the end, the capstone gang and every other drawn where the model puts it |
 
 To drive frames from a test, set `__khufu.hold = true`: the page's frame loop then stands aside.

@@ -10,7 +10,11 @@ export default defineConfig({
   testDir: 'tests/e2e',
   testMatch: '*.spec.mjs',
   timeout: 240_000,
-  expect: { timeout: 30_000, toHaveScreenshot: { maxDiffPixelRatio: 0.02, threshold: 0.25 } },
+  // Screenshots: a pixel counts as different past a colour distance of 0.02 (pixelmatch), and
+  // a view fails past 0.1 % of such pixels. The Mac (where the references were made) and the
+  // CI runner both run SwiftShader: their pictures differ by rounding, in at most 0.009 % of
+  // pixels at 0.02 on every view but quarry-gangs, which has its own tolerance (view-helpers).
+  expect: { timeout: 30_000, toHaveScreenshot: { maxDiffPixelRatio: 0.001, threshold: 0.02 } },
   fullyParallel: false,
   workers: 1, // one GPU-less browser at a time: the frame-time budgets need the CPU
   retries: 0,
