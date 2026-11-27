@@ -322,6 +322,7 @@ function setCourses(n, capstone = true) {
   if (shown === shownCourses) return; // the timeline calls this every frame while playing
   shownCourses = shown;
   collision.topY = top;
+  collision.stair = monument.complete;
   revealTop = !monument.complete ? top + 0.001 : null;
   applyReveal();
   // new masonry may have risen through the walker (standing on a lower cap): lift it to the
@@ -375,6 +376,7 @@ const client = new SimClient({
     view = m.view;
     setCourses(Math.min(view.built, COURSE_COUNT), view.done);
     working.update(view.course);
+    working.setStones(view.stones);
     bubble.setCourse(working.layout, view.course); // (gangs walk on the stones as drawn)
     monument.setHoles(working.layout?.y0, view.course && working.layout?.ci === view.course.ci ? working.layout.trench : null); // (an internal ramp's trench)
     applyReveal();
@@ -549,6 +551,7 @@ function frame() {
   if (window.__khufu.hold) { clock.getDelta(); requestAnimationFrame(frame); return; }
   const dt = Math.min(clock.getDelta(), 0.1);
   if (tour.active) tour.update(dt); else timeline.tick(dt);
+  if (timeline.ready) working.frame(timeline.t); // (stones at the landings and on their way)
   if (timeline.ready && bubble.visible && !(tour.active && tour.drewBubble)) bubble.update(timeline.t, camera, dt);
   // the tunnel's cut and its drawn face, diggers and plugs from the same time sample
   if (timeline.ready) { const tn = works.update(timeline.t, walker.enabled, camera); if (tn) { tunnelNow = tn; applyReveal(); } }

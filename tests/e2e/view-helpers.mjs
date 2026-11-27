@@ -44,6 +44,7 @@ export async function showView(page, v) {
     K.hold = true;
     K.bubble.update(t, K.camera, 0);
     K.works.update(t, false, K.camera);
+    K.working.frame(t);
     K.renderer.render(K.scene, K.camera);
   }, t);
   return t;

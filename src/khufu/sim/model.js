@@ -159,6 +159,11 @@ export function createModel(overrides = {}) {
       gRes: I(), tRes: I(), gStock: I(), tStock: I(), gClaim: I(), tClaim: I(), gSet: I(), tSet: I(), busy: I(),
       land: p.sectors.map((s) => makeResource(`landing c${ci}s${s.id}`, P.landing.berths)),
       heavyState: new Uint8Array(p.heavy.length), heavyLeft: p.heavy.length,
+      // For drawing only (no event reads them, and they are not in hash()): when each stone
+      // lying at a landing was delivered (one stack per sector and kind: a crew takes the one
+      // on top), and the stones a crew is moving from the landing to their place:
+      // [kind, claim index, claimed, set, moving time, place in the pile, delivered].
+      gPile: p.sectors.map(() => []), tPile: p.sectors.map(() => []), work: p.sectors.map(() => []),
       setLeft: p.sectors.reduce((a, s) => a + s.giza.length + s.tura.length, 0),
     };
     rt.gFree = rt.gTot.reduce((a, b) => a + b, 0); rt.tFree = rt.tTot.reduce((a, b) => a + b, 0);
@@ -290,7 +295,7 @@ export function createModel(overrides = {}) {
   function unloaded(g) {
     const G = S.gang, c = G.course[g], s = G.sector[g], tb = g * NT;
     const rt = S.rt[c], p = plan(c), sec = p.sectors[s];
-    if (G.kind[g] === GIZA) rt.gStock[s]++; else rt.tStock[s]++;
+    if (G.kind[g] === GIZA) { rt.gStock[s]++; rt.gPile[s].push(S.t); } else { rt.tStock[s]++; rt.tPile[s].push(S.t); }
     trySet(c, s);
     const back = sec.top + p.rampLen[sec.route] + (G.kind[g] === GIZA ? p.road.q : p.road.h)[sec.route];
     G.task[g] = TASK.RETURNING;
@@ -323,8 +328,12 @@ export function createModel(overrides = {}) {
       let i, cell, d;
       if (kind === 0) { i = rt.gClaim[s]++; rt.gStock[s]--; cell = sec.giza[i]; d = sec.gizaD[i]; } else { i = rt.tClaim[s]++; rt.tStock[s]--; cell = sec.tura[i]; d = sec.turaD[i]; }
       rt.busy[s]++;
-      const dur = (P.set.baseMin * 60 * (p.h / 0.75) * dressOf(p.elem[cell]) + d / P.set.leverSpeed) * jit();
+      const fit = P.set.baseMin * 60 * (p.h / 0.75) * dressOf(p.elem[cell]), move = d / P.set.leverSpeed;
+      const dur = (fit + move) * jit();
       push(S.Q, S.t + dur, SET_DONE, c * SEC_BITS + s, (kind << 24) | i);
+      // (for drawing: levered across the bed first, then fitted)
+      const pile = kind === 0 ? rt.gPile[s] : rt.tPile[s], td = pile.length ? pile.pop() : S.t;
+      rt.work[s].push([kind, i, S.t, S.t + dur, (dur * move) / (fit + move), pile.length, td]);
     }
   }
 
@@ -332,6 +341,7 @@ export function createModel(overrides = {}) {
     const c = Math.floor(a / SEC_BITS), s = a % SEC_BITS, kind = b >>> 24, i = b & 0xffffff;
     const rt = S.rt[c], p = plan(c), sec = p.sectors[s];
     rt.busy[s]--; rt.setLeft--;
+    rt.work[s] = rt.work[s].filter((w) => w[0] !== kind || w[1] !== i);
     if (kind === 0) rt.gSet[s]++; else rt.tSet[s]++;
     credit(p.elem[kind === 0 ? sec.giza[i] : sec.tura[i]]);
     blockSet();

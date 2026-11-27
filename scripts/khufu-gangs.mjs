@@ -273,7 +273,7 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
 {
   const surfOf = (sim) => (View.courseSurfaceOf ? View.courseSurfaceOf(sim) : null);
   const open = Gangs.rampOpening || (() => false); // (stones left out where a ramp arrives)
-  const n = { people: 0, pairs: 0, sled: 0, stone: 0, air: 0, under: 0, corner: 0 };
+  const n = { people: 0, pairs: 0, sled: 0, stone: 0, air: 0, under: 0, corner: 0, sledAir: 0, lying: 0, stoneAir: 0, nextAir: 0 };
   const eg = {};
   const note = (k, msg) => { n[k]++; if (!eg[k]) eg[k] = msg; };
   const buf = new Float32Array(SLED + 200 * FIG);
@@ -292,10 +292,24 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
     // how far (x, z) is inside cell [i, q] (negative: outside)
     const inside = ([i, q], x, z) => Math.min(x + L.hw - i * L.cell, (i + 1) * L.cell - x - L.hw, z + L.hw - q * L.cell, (q + 1) * L.cell - z - L.hw);
     const P = [], sleds = [];
+    // what stands under (x, z): the ground, a ramp, the finished courses, a stone set
+    // (within a step's 0.6 m of a stone set, its top: people and sleds step up onto it there)
+    const support = (x, z) => {
+      let y = terrainY(R, x, z);
+      const c = L && cellAt(x, z);
+      if (c) for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) {
+        const cc = [c[0] + a, c[1] + b];
+        if (cc[0] >= 0 && cc[1] >= 0 && cc[0] < L.n && cc[1] < L.n && set[cc[1] * L.n + cc[0]] && inside(cc, x, z) > -0.6) y = Math.max(y, L.y0 + L.h);
+      }
+      return y;
+    };
     for (const trip of gangTrips(sim)) {
       if (trip.away) continue;
       const tok = figures(trip, t, buf, 0, surf), m = crewSpec(trip.kind, trip.crew).n, act = ACT_NAME[tok.act];
       sleds.push({ g: trip.g, x: buf[0], y: buf[1], z: buf[2], yaw: buf[3], L: trip.load });
+      // a sled off a ledge stands on what is under it
+      const onLedge = (trip.narrow || []).some(([p, a, e]) => p === tok.pa && tok.s > a - 25 && tok.s < e + 25);
+      if (!onLedge && !tok.blend) { const sy = support(buf[0], buf[2]); if (buf[1] > sy + 0.15) note('sledAir', `gang ${trip.g}'s sled (${act}) ${(buf[1] - sy).toFixed(2)} m in the air at day ${day}`); }
       // (on a ledge, the zigzag or a theory's, nobody stands on the ground: the internal ramp runs
       // inside the masonry)
       const ledge = (trip.narrow || []).some(([p, a, e]) => p === tok.pa && tok.s > a - 25 && tok.s < e + 25);
@@ -346,9 +360,22 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
       if (!p.ledge && p.y > up + 0.15) note('air', `gang ${p.g} man ${p.j} (${p.act}) ${(p.y - up).toFixed(2)} m in the air at day ${day}`);
       if (!p.ledge && p.y < down - 0.15) note('under', `gang ${p.g} man ${p.j} (${p.act}) ${(down - p.y).toFixed(2)} m in the ground at day ${day}`);
     }
+    // stones lying at the landings (the bottom layer): on the ground, the bed or a stone set
+    if (View.stonesView) Gangs.stonesAt(View.stonesView(sim), t, (x, y, z, sx, sy, sz, st) => {
+      if (st !== 0) return;
+      const bottom = y - sy / 2, sp = support(x, z);
+      if (bottom > sp + sy) return; // (an upper layer)
+      // (stones for the next course, delivered before it opens, lie on top of this one, which is
+      // still being laid: over a stone not yet set they are a course high in the air; counted
+      // apart)
+      const next = L && Math.abs(bottom - L.y0 - L.h) < 0.05;
+      n.lying++;
+      if (bottom > sp + 0.15) { if (next) n.nextAir++; else note('stoneAir', `a stone lying at a landing ${(bottom - sp).toFixed(2)} m in the air at day ${day} (${x.toFixed(1)}, ${z.toFixed(1)})`); }
+    });
   }
+  console.log(`  sleds in the air: ${n.sledAir}; stones lying at the landings: ${n.lying}, ${n.stoneAir} of them in the air (and ${n.nextAir} for the next course over a stone of this one not yet set)`);
   console.log(`  ${n.people} people placed at 60 moments: ${n.pairs} pairs of people of two gangs in one spot (${n.corner} at a switchback), ${n.sled} in another gang's sled, ${n.stone} in a stone already set, ${n.air} in the air, ${n.under} in the ground`);
-  for (const k of ['pairs', 'sled', 'stone', 'air', 'under', 'corner']) if (eg[k]) console.log(`    e.g. ${eg[k]}`);
+  for (const k of ['pairs', 'sled', 'stone', 'air', 'under', 'corner', 'sledAir', 'stoneAir']) if (eg[k]) console.log(`    e.g. ${eg[k]}`);
   // (the model lets gangs catch up and two may cross where a yard's aisle meets its avenue, or
   // reach a ramp head side by side: a few such moments remain. The spiral and the internal ramp
   // have a single lane for every gang, and at the foot of it the queue keeps a place one gang
@@ -360,6 +387,74 @@ const roofBeams = { n: 0, bad: 0, worst: 0 }; // filled by sections 3 and 4
   check(n.sled <= lim.sled, `people are hardly ever inside another gang's sled (${n.sled}, at most ${lim.sled})`);
   check(n.stone <= lim.stone, `nobody stands inside a stone of the course being laid (${n.stone}, at most ${lim.stone})`);
   check(n.air + n.under <= n.people * 1e-3, `people stand on the ground, the ramps and the stones (${n.air} in the air, ${n.under} in the ground: at most 0.1 %)`);
+  check(n.sledAir <= 40, `sleds stand on the ground, the ramps and the stones (${n.sledAir} in the air, at most 40)`);
+  check(n.lying > 100 && n.stoneAir === 0, `stones lying at the landings of the course being laid lie on its bed (${n.stoneAir} of ${n.lying} in the air)`);
+}
+
+// ---- 6. stones never jump -------------------------------------------------------------
+// Played second by second: every stone (on a sled, lying at a landing, being moved to its
+// place, or set in the course being laid) must have been within a step's reach of a stone the
+// second before; a block newly set must have had its stone in that very place; and no stone
+// on a sled, at a landing or on its way vanishes. (Stones only appear out of nothing as a gang
+// loads them at the quarry or on the quay, whose stocks are not drawn.)
+{
+  const stonesOf = View.stonesView ? (sim) => View.stonesView(sim) : null;
+  const open = Gangs.rampOpening || (() => false);
+  function snapshotStones(sim, t, trips, surf, buf) {
+    const S = sim.state, out = { moving: [], set: new Map() };
+    for (const trip of trips.values()) {
+      if (trip.away || !trip.load) continue;
+      const tok = figures(trip, t, buf, 0, surf);
+      if (buf[8]) out.moving.push([buf[5], buf[6], buf[7], 'sled', ACT_NAME[tok.act], trip.g]);
+    }
+    if (stonesOf) Gangs.stonesAt(stonesOf(sim), t, (x, y, z, sx, sy, sz, st) => out.moving.push([x, y, z, st === 0 ? 'landing' : 'moved', '', -1]));
+    const rt = !S.done && S.rt[S.cur];
+    if (rt) {
+      const L = View.courseLayout(sim, S.cur), work = new Set((rt.work || []).flatMap((list, sct) => list.map((w) => `${sct}:${w[0]}:${w[1]}`)));
+      for (let sct = 0; sct < L.sectors; sct++) for (const [o, c, kind] of [[L.off[2 * sct], rt.gClaim[sct], 0], [L.off[2 * sct + 1], rt.tClaim[sct], 1]]) {
+        for (let j = 0; j < c; j++) {
+          const i = L.cells[o + j];
+          if (open(L, i) || work.has(`${sct}:${kind}:${j}`)) continue;
+          out.set.set(`${S.cur}:${i}`, [-L.hw + ((i % L.n) + 0.5) * L.cell, L.y0 + L.h / 2, -L.hw + (((i / L.n) | 0) + 0.5) * L.cell]);
+        }
+      }
+      for (let j = 0; j < rt.heavyState.length; j++) if (rt.heavyState[j] === 2) out.set.set(`${S.cur}:h${j}`, [L.heavy[j * 7], L.y0 + L.h / 2, L.heavy[j * 7 + 1]]);
+    }
+    return out;
+  }
+  const near = (list, p, r) => list.some((q) => Math.abs(q[0] - p[0]) < r && Math.abs(q[2] - p[2]) < r && Math.hypot(q[0] - p[0], q[1] - p[1], q[2] - p[2]) < r);
+  const nJ = { appear: 0, set: 0, vanish: 0, steps: 0, setChecked: 0 }, eg = {};
+  const note = (k, m) => { nJ[k]++; if (!eg[k]) eg[k] = m; };
+  function playStones(name, from, seconds) {
+    const tr = gangTracker(), trips = new Map(), buf = new Float32Array(SLED + 200 * FIG);
+    let prev = null;
+    for (let t = from; t <= from + seconds + 1e-9; t += 1) {
+      const sim = at.seekTo(t), u = tr.update(sim);
+      for (const x of u.trips) trips.set(x.g, x);
+      const surf = View.courseSurfaceOf ? View.courseSurfaceOf(sim) : null;
+      const cur = snapshotStones(sim, t, trips, surf, buf), day = (t / DAY).toFixed(4);
+      if (prev && prev.ci === sim.state.cur) {
+        // every stone here now was near one a second ago (a run is 3.5 m/s; stones are moved
+        // at walking pace at most)
+        for (const p of cur.moving) if (p[4] !== 'loading' && !near(prev.moving, p, 3.5)) note('appear', `a stone ${p[3]}${p[4] ? ` (${p[4]})` : ''} appears from nowhere at day ${day} (${p[0].toFixed(1)}, ${p[2].toFixed(1)})`);
+        // every stone a second ago is near one now (on a sled, at a landing, moved, or set)
+        const nowAll = [...cur.moving, ...[...cur.set.values()]];
+        for (const p of prev.moving) if (!near(nowAll, p, 3.5)) note('vanish', `a stone ${p[3]}${p[4] ? ` (${p[4]})` : ''} vanishes at day ${day} (${p[0].toFixed(1)}, ${p[2].toFixed(1)})`);
+        // a block newly set was in that place a second ago
+        for (const [k, p] of cur.set) if (!prev.set.has(k)) { nJ.setChecked++; if (!near(prev.moving, p, 0.3)) note('set', `a block is set at day ${day} (${p[0].toFixed(1)}, ${p[2].toFixed(1)}) with no stone there a second before`); }
+      }
+      cur.ci = sim.state.cur;
+      prev = cur; nJ.steps++;
+    }
+    void name;
+  }
+  playStones('a working morning (year 7)', 7 * YEAR + 30 * DAY + 3600, 2400);
+  playStones('across course 20 complete', course(19) - 1200, 2400);
+  playStones('high up (course 150)', S0.courseOpen[149] + DAY + 3600, 1200);
+  console.log(`  stones played over ${nJ.steps} s: ${nJ.appear} appear from nowhere, ${nJ.vanish} vanish, ${nJ.set} blocks set where no stone was (of ${nJ.setChecked} set)`);
+  for (const k of ['appear', 'vanish', 'set']) if (eg[k]) console.log(`    e.g. ${eg[k]}`);
+  check(nJ.setChecked > 20, `blocks were set in the windows played (${nJ.setChecked})`);
+  check(nJ.appear === 0 && nJ.vanish === 0 && nJ.set === 0, 'every stone goes from the sled to the landing to its place without jumping');
 }
 
 console.log(failed ? `${failed} check(s) failed` : 'all checks passed');

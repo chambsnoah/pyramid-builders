@@ -8,7 +8,7 @@ import { ELEM, HV } from './planner.js';
 import { GIZA, TURA, HEAVY, LAST } from './model.js';
 import { worksSchedule } from './works.js';
 import { theoryStats } from './compare.js';
-import { courseSurface } from './gangs.js';
+import { courseSurface, stockSpot } from './gangs.js';
 import { FACES } from './ramps/straightZigzag.js';
 
 // Live state of a queue resource at time t (see resource.js): `pend` holds the service start
@@ -81,8 +81,10 @@ export function viewState(sim) {
   if (rt) {
     const total = rt.gTot.reduce((a, b) => a + b, 0) + rt.tTot.reduce((a, b) => a + b, 0) + rt.heavyState.length;
     course = {
-      ci: S.cur, open: rt.open, total, left: rt.setLeft + rt.heavyLeft,
+      ci: S.cur, open: rt.open, total, left: rt.setLeft + rt.heavyLeft, t,
       gSet: rt.gSet.slice(), tSet: rt.tSet.slice(), gClaim: rt.gClaim.slice(), tClaim: rt.tClaim.slice(), heavyState: rt.heavyState.slice(),
+      // stones claimed but not yet set (drawn on their way: stonesView): [sector, kind, claim index, arrives]
+      work: workOf(rt),
     };
   }
   const built = sim.builtCourses();
@@ -98,7 +100,34 @@ export function viewState(sim) {
     queues: queues.slice(0, 8), landingWaiting, landings,
     elemSet: Array.from(S.elemSet),
     course,
+    stones: stonesView(sim),
   };
+}
+
+const workOf = (rt) => rt.work.flatMap((list, s) => list.map((w) => [s, w[0], w[1], w[2] + w[4]]));
+
+// The stones lying at the landings and those being moved to their places, in the course being
+// laid and the next one (stonesAt() in gangs.js places them at any time after this one).
+export function stonesView(sim) {
+  const S = sim.state, piles = [], work = [];
+  for (const ci of new Set([S.cur, S.look])) {
+    const rt = !S.done && S.rt[ci];
+    if (!rt) continue;
+    const p = sim.plan(ci);
+    for (let s = 0; s < rt.nSec; s++) {
+      const gp = rt.gPile[s], tp = rt.tPile[s], wk = rt.work[s];
+      if (!gp.length && !tp.length && !wk.length) continue;
+      const [x, z, fx, fz] = stockSpot(p, s), pi = piles.length;
+      const top = (a) => a.slice(-6).reverse(); // (the top ones are still being levered onto the pile)
+      piles.push({ ci, s, x, z, fx, fz, y: COURSES[ci].y0, cell: p.cell, hw: p.hw, h: p.h, sw: p.cell * 0.96, sh: p.h * 0.97, gn: gp.length, tn: tp.length, gTop: top(gp), tTop: top(tp) });
+      const sec = p.sectors[s];
+      for (const [kind, i, t0, t1, move, rank, td] of wk) {
+        const cell = kind === 0 ? sec.giza[i] : sec.tura[i];
+        work.push({ pile: pi, kind, i, t0, t1, move, rank, td, x: -p.hw + ((cell % p.n) + 0.5) * p.cell, z: -p.hw + (((cell / p.n) | 0) + 0.5) * p.cell });
+      }
+    }
+  }
+  return { t: S.t, piles, work };
 }
 
 // Where each block of course ci goes, in setting order, for drawing the part-laid course.
@@ -160,8 +189,8 @@ const surfaces = new WeakMap();
 export function courseSurfaceOf(sim) {
   const S = sim.state, rt = !S.done && S.rt[S.cur];
   if (!rt) return null;
-  const course = { ci: S.cur, gClaim: rt.gClaim, tClaim: rt.tClaim, heavyState: rt.heavyState };
-  const sig = `${S.cur}:${rt.gClaim.join(',')}:${rt.tClaim.join(',')}:${rt.heavyState.join('')}`;
+  const course = { ci: S.cur, t: S.t, gClaim: rt.gClaim, tClaim: rt.tClaim, heavyState: rt.heavyState, work: workOf(rt) };
+  const sig = `${S.cur}:${rt.gClaim.join(',')}:${rt.tClaim.join(',')}:${rt.heavyState.join('')}:${course.work.filter((w) => w[3] > S.t).map((w) => w.join(',')).join(';')}`;
   let c = surfaces.get(sim);
   if (!c || c.ci !== S.cur) surfaces.set(sim, (c = { ci: S.cur, L: courseLayout(sim, S.cur), sig: null, surf: null }));
   if (c.sig !== sig) { c.sig = sig; c.surf = courseSurface(c.L, course); }

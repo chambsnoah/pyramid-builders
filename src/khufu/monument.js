@@ -273,6 +273,9 @@ export class Monument {
     this.courses.visible = !this.hull.visible;
     this.pyramidion.visible = complete && !this.hull.visible;
     this.cap.visible = this.built > 0 && !complete;
+    // (the access stair is modern: it is only there once the pyramid is finished, not under
+    // the ramps while it is built)
+    this.stair.visible = complete;
   }
 
   setXray(on) {

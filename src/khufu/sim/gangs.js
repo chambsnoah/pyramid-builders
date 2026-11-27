@@ -640,6 +640,8 @@ function tripOf(sim, R, plans, g, Q) {
   const load = loadOf(plan, kind, sector);
   // a roof beam's resting place on its two walls: centre and heading (see figures())
   const place = heavy && item.kind === 'roof' ? [item.x, COURSES[c].y0 + load[1] / 2, item.z, item.axis === 'x' ? Math.PI / 2 : 0] : null;
+  // an ordinary stone is levered off onto the sector's stock spot (see stonesAt)
+  const drop = heavy ? null : (([x, z]) => [x, COURSES[c].y0 + load[1] / 2, z])(stockSpot(plan, sector));
   // keep-left on a ledge: half its width less the gang's half width (the zigzag and the spiral
   // ledges are 7 m wide: 1.6 m; the internal ramp, 3 m: the middle)
   const th = sim.ctx.theory, lw = th.id === 'internal' ? P.ramp.internal.width : th.id === 'spiral' ? P.ramp.spiral.width : P.ramp.zigzag.width;
@@ -648,7 +650,7 @@ function tripOf(sim, R, plans, g, Q) {
   const onCourse = { 1: [out.sHead - 15, Lo + 15], 2: [-15, Lb - back.sHead + 15] };
   // where the way out reaches the yard's avenue, and the way home leaves it (see laneAt)
   const aisle = out.sCross > 0 ? { 1: out.sCross, 2: limestoneHeavy ? null : Lb - out.sCross } : null;
-  return { ...base, sig, paths, knots: Float64Array.from(K), load, course: c, narrow, rampLane, caps, berth, place, mv, keep, onCourse, aisle };
+  return { ...base, sig, paths, knots: Float64Array.from(K), load, course: c, narrow, rampLane, caps, berth, place, drop, mv, keep, onCourse, aisle };
 }
 
 function reverse(p) {
@@ -1032,6 +1034,78 @@ function formation(trip, P, li, s, act, out, o, t, speed) {
 // levermen behind it)
 const foldWidth = (kind) => (kind === HEAVY ? 1.2 : 0.9);
 
+// ---- stones on the course: from the sled to their place -------------------------------
+// A gang levers its stone off at the landing onto the stock spot, just ahead of the landing
+// into the sector. Stones not taken at once lie in two piles beyond it (Giza stone to the
+// left, casing to the right), each two layers high. A setting crew takes the stone on top and
+// levers it across the bed to its place, in the model's own time for that (the share of the
+// setting time that is moving it, see trySet() in model.js), and fits it there until the model
+// sets it. So a stone is always somewhere: on the sled, on the spot or the pile, on its way,
+// in its place.
+//   stonesView(sim) (sim/view.js) describes them at the model's time; stonesAt() places them.
+const PILE_W = 8, PILE_H = 2, PILE_V = 0.12; // stones across each pile, layers, m/s levering on the pile
+// the stock spot of sector s of a course plan: [x, z, forward x, forward z] (forward: the way
+// gangs come in, from the ramp head to the landing)
+export function stockSpot(plan, s) {
+  const sec = plan.sectors[s], head = plan.layout.routes[sec.route].head, [lx, lz] = sec.landing;
+  let fx = lx - head[0], fz = lz - head[1], d = Math.hypot(fx, fz);
+  if (d < 1e-6) { fx = (sec.x0 + sec.x1) / 2 - lx; fz = (sec.z0 + sec.z1) / 2 - lz; d = Math.hypot(fx, fz) || 1; }
+  fx /= d; fz /= d;
+  const k = plan.cell * 0.48 + 1.6; // (clear of the sleds at the landing)
+  const x = Math.min(sec.x1 - plan.cell / 2, Math.max(sec.x0 + plan.cell / 2, lx + fx * k)), z = Math.min(sec.z1 - plan.cell / 2, Math.max(sec.z0 + plan.cell / 2, lz + fz * k));
+  return [x, z, fx, fz];
+}
+// where stone number `rank` of a pile (kind 0 Giza, 1 casing) rests: [x, y, z]. The piles
+// grow in rows away from the landing, PILE_W stones across on each side of its line, leaving
+// out any place off the bed of the course (near the top the courses are small).
+const slotCache = new Map();
+function pileSlot(P, kind, rank, out) {
+  const key = `${P.ci}:${P.s}:${kind}:${P.x}:${P.z}`;
+  let list = slotCache.get(key);
+  if (!list) { if (slotCache.size > 400) slotCache.clear(); slotCache.set(key, (list = { q: 0, xz: [] })); }
+  const need = Math.floor(rank / PILE_H), pitch = P.cell * 1.05, lim = P.hw - P.sw / 2 - 0.05;
+  while (list.xz.length <= 2 * need && list.q < 1e5) {
+    const q = list.q++;
+    const a = (kind === 0 ? -1 : 1) * (0.5 + (q % PILE_W)) * pitch, b = (1 + Math.floor(q / PILE_W)) * pitch;
+    const x = P.x + P.fx * b - P.fz * a, z = P.z + P.fz * b + P.fx * a;
+    if (Math.max(Math.abs(x), Math.abs(z)) <= lim) list.xz.push(x, z);
+  }
+  out[0] = list.xz[2 * need] ?? P.x; out[2] = list.xz[2 * need + 1] ?? P.z;
+  out[1] = P.y + P.sh / 2 + (rank % PILE_H) * P.h;
+  return out;
+}
+const SA = [0, 0, 0];
+// where a pile stone delivered at td, resting at `rank`, is at time t (levered from the spot)
+function pileAt(P, kind, rank, td, t, out) {
+  pileSlot(P, kind, rank, SA);
+  const d = Math.hypot(SA[0] - P.x, SA[2] - P.z), k = smooth((t - td) / Math.max(1, d / PILE_V));
+  out[0] = P.x + (SA[0] - P.x) * k; out[1] = P.y + P.sh / 2 + (SA[1] - P.y - P.sh / 2) * k; out[2] = P.z + (SA[2] - P.z) * k;
+  return out;
+}
+// Every stone lying at a landing or being moved at time t: calls fn(x, y, z, sx, sy, sz, state,
+// kind) with its centre and size (state 0 lying, 1 moving, 2 fitting in its place; kind 0 Giza
+// stone, 1 casing).
+// v: stonesView(); stones moved are for t at or after the view's time.
+export function stonesAt(v, t, fn) {
+  const C = [0, 0, 0];
+  for (const P of v.piles) {
+    for (const kind of [0, 1]) {
+      const n = kind ? P.tn : P.gn, tops = kind ? P.tTop : P.gTop; // (tops: delivery times of the top stones, the last first)
+      for (let r = 0; r < n; r++) {
+        const top = n - 1 - r, td = top < tops.length ? tops[top] : -Infinity;
+        pileAt(P, kind, r, td, t, C);
+        fn(C[0], C[1], C[2], P.sw, P.sh, P.sw, 0, kind);
+      }
+    }
+  }
+  for (const W of v.work) {
+    const P = v.piles[W.pile];
+    pileAt(P, W.kind, W.rank, W.td, W.t0, C);
+    const k = smooth((t - W.t0) / Math.max(1e-6, W.move));
+    fn(C[0] + (W.x - C[0]) * k, C[1] + (P.y + P.sh / 2 - C[1]) * k, C[2] + (W.z - C[2]) * k, P.sw, P.sh, P.sw, t >= W.t0 + W.move ? 2 : 1, W.kind);
+  }
+}
+
 // ---- the course being laid, as people walk on it ---------------------------------------
 // The paths run on the bed of the course (or, for the next course, on top of this one). The
 // stones already set (or being levered in) stand a course high on that bed: people and sleds
@@ -1042,9 +1116,11 @@ const foldWidth = (kind) => (kind === HEAVY ? 1.2 : 0.9);
 export function courseSurface(L, course) {
   if (!L || !course || course.ci !== L.ci || !L.n || !(L.cell > 0)) return null; // (the capstone's course has no grid of stones)
   const set = new Uint8Array(L.n * L.n);
+  // (a stone still on its way to its place is not there yet)
+  const away = new Set((course.work || []).filter((w) => w[3] > (course.t ?? -Infinity)).map(([s, k, i]) => `${s}:${k}:${i}`));
   for (let s = 0; s < L.sectors; s++) {
-    for (let j = 0; j < course.gClaim[s]; j++) { const i = L.cells[L.off[2 * s] + j]; if (!rampOpening(L, i)) set[i] = 1; }
-    for (let j = 0; j < course.tClaim[s]; j++) { const i = L.cells[L.off[2 * s + 1] + j]; if (!rampOpening(L, i)) set[i] = 1; }
+    for (let j = 0; j < course.gClaim[s]; j++) { const i = L.cells[L.off[2 * s] + j]; if (!rampOpening(L, i) && !away.has(`${s}:0:${j}`)) set[i] = 1; }
+    for (let j = 0; j < course.tClaim[s]; j++) { const i = L.cells[L.off[2 * s + 1] + j]; if (!rampOpening(L, i) && !away.has(`${s}:1:${j}`)) set[i] = 1; }
   }
   // granite lining blocks (not roof beams, which lie across their openings)
   for (let j = 0; j < course.heavyState.length; j++) {
@@ -1155,6 +1231,18 @@ export function figures(trip, t, out, o = 0, surf = null) {
   out[o + 7] = out[o + 2] + cz * ahead - sx * side;
   out[o + 8] = shown;
   out[o + 9] = yaw;
+  // An ordinary stone is levered off ahead onto the stock spot of its sector (trip.drop), turned
+  // square with the course, and let down on the bed there as the unloading ends: where the
+  // stones at the landing are drawn from then on (stonesAt).
+  if (L && trip.drop && tok.act === ACT.UNLOAD && tok.blend) {
+    const d = trip.drop, e = smooth(tok.a / 0.85), v = smooth((tok.a - 0.35) / 0.65);
+    const x0 = A[0], y0 = A[1] + L[1] / 2 + deck, z0 = A[2];
+    out[o + 5] = x0 + (d[0] - x0) * e;
+    out[o + 6] = y0 + (d[1] - y0) * v;
+    out[o + 7] = z0 + (d[2] - z0) * e;
+    const sq = Math.round(A[3] / (Math.PI / 2)) * (Math.PI / 2);
+    out[o + 9] = lerpAngle(A[3], sq, e);
+  }
   // A roof beam of the special works (King's Chamber, relieving chambers, Queen's Chamber,
   // Grand Gallery) is not lowered where the sled stands: the gang stops clear of the opening
   // with the beam pointing across it, and the levermen work it forward off the deck, along
