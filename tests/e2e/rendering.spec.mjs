@@ -13,14 +13,14 @@ const BUDGET = {
   tris: 1.6e6, calls: 32,
 };
 
-test.describe.configure({ mode: 'serial' });
+// (not serial: a view that fails does not skip the views after it; the page is opened again)
 const shared = sharedPage(test, { setup: (p) => p.addStyleTag({ content: HIDE_UI }) });
 
 for (const v of VIEWS) {
   test(`view: ${v.name}`, async () => {
     const { page } = shared;
     await showView(page, v);
-    await expect(page).toHaveScreenshot(`${v.name}.png`, { animations: 'disabled' });
+    await expect(page).toHaveScreenshot(`${v.name}.png`, { animations: 'disabled', ...v.shot });
   });
 }
 

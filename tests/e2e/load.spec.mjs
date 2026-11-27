@@ -10,6 +10,16 @@ test('index.html (the small pyramid) loads and its simulation runs', async ({ pa
   await expect(page.locator('#tour')).toBeVisible();
 });
 
+test("the small pyramid's page links to Khufu's, and back", async ({ page }) => {
+  await page.goto('/index.html');
+  await page.locator('#khufu').click();
+  await expect(page).toHaveURL(/\/khufu\.html$/);
+  await page.waitForFunction(() => window.__khufu?.summary, null, { timeout: 90_000 });
+  await page.locator('#back').click();
+  await expect(page).toHaveURL(/\/index\.html$/);
+  await page.waitForFunction(() => window.__sim);
+});
+
 test('khufu.html loads, runs the model in its worker and shows the finished monument', async ({ page }) => {
   const run = await openKhufu(page);
   expect(run.hash).toBe(MODEL_HASH);

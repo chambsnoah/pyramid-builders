@@ -7,8 +7,8 @@
 // 1. Continuity: plays short windows second by second, as the page does (a seek per step,
 //    keeping each gang's latest trip), and checks that no sled, stone or crew member moves
 //    faster than a man can walk between two steps: early, middle, late, across a month
-//    boundary (the seeker restores a snapshot there), across a course completion and on the
-//    zigzag.
+//    boundary (the seeker restores a snapshot there), across a course completion, on the
+//    zigzag and across the capstone set at the very end.
 // 2. Late trips: the page draws with the trips of its last reply, a frame or more old. A trip
 //    read at t1 must give the same pose at t2 > t1 as the trip read at t2, up to its last knot.
 // 3. Model match: at the model's own event times the sled is where the model says: at the
@@ -113,6 +113,10 @@ const windows = [
 ];
 if (zigCourse > 0) windows.push([`on ${above} (course ${zigCourse + 1})`, S0.courseOpen[zigCourse] + 2 * DAY + 3600, 1200]);
 for (const [name, t, len] of windows) play(name, t, len);
+// the capstone set: the build is done, and the capstone gang, still on the top, gets a new
+// trip for its walk home; it must start where the last one left it. (Quarter-second steps,
+// ending exactly on the end: a jump of a couple of metres is under VMAX at 1 s steps.)
+play('across the capstone set (the end)', end - 120, 120, 0.25);
 // a coarser pass over a whole working day, as at 1 min/s
 play('a whole day in 20 s steps (year 7)', 7 * YEAR + 30 * DAY, DAY, 20);
 
