@@ -300,7 +300,7 @@ function wayOut(sim, R, plan, c, route, src, y, end, via = null) {
   const ledge = rt.segs.some((s) => s.kind !== 'straight') && (th.ledge || (rt.segs.length > 1 && R.zig));
   let iSwitch, iHead, corners = [];
   if (ledge) {
-    const zp = th.ledge ? th.ledge(route, bed) : zigPrefix(R, f, bed);
+    const zp = th.ledge ? th.ledge(rt.id, bed) : zigPrefix(R, f, bed);
     B.to(zp.pts[0], zp.pts[2]); // (the zigzag ledge starts where the straight ramp ends)
     iSwitch = B.n - 1;
     const base = B.n - 1;
@@ -610,14 +610,19 @@ export function gangTrips(sim) {
 }
 
 // What the page needs to draw the ramps: the straight wedges and each face's zigzag up to
-// the bed of the highest course in use.
+// the bed of the highest course in use. Above the theory's top (ramps/straightZigzag.js
+// topOf) only one route is still raised: the others are drawn as they stopped, at top.y.
 export function rampsForDrawing(sim, R = rampScene(sim)) {
-  const zig = R.zig && R.top > R.sw ? FACES.map((_, f) => zigPrefix(R, f, R.top).pts) : null;
-  // a theory's own fixed paths, for every route of the highest course in use that has one
-  const th = sim.ctx.theory;
+  const th = sim.ctx.theory, top = th.top;
+  const upTo = (id) => (top && id !== top.route ? Math.min(R.top, top.y) : R.top);
+  const zig = R.zig && R.top > R.sw ? FACES.map((_, f) => zigPrefix(R, f, upTo(f)).pts) : null;
+  // a theory's own fixed paths, for every route of the highest course in use that has one,
+  // and those that stopped at the top
   let ledges = null;
   if (th.ledge && !R.done) {
-    ledges = th.layout(R.look).routes.filter((r) => r.segs.some((s) => s.kind !== 'straight')).map((r) => th.ledge(r.id, R.top).pts);
+    const ids = th.layout(R.look).routes.filter((r) => r.segs.some((s) => s.kind !== 'straight')).map((r) => r.id);
+    if (top && R.look >= top.ci) for (const r of th.layout(top.ci - 1).routes) if (!ids.includes(r.id) && r.segs.some((s) => s.kind !== 'straight')) ids.push(r.id);
+    ledges = ids.map((id) => th.ledge(id, upTo(id)).pts);
     if (!ledges.length) ledges = null;
   }
   const lw = th.id === 'internal' ? sim.P.ramp.internal.width : th.id === 'spiral' ? sim.P.ramp.spiral.width : R.zw;

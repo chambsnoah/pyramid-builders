@@ -6,13 +6,12 @@
 // sky gives room to turn the sled with levers. One lane all the way, so the whole top of the
 // pyramid is fed through it.
 import { COURSES, HALF, halfWidthAt } from '../../data.js';
-import { FACES, straightRamp } from './straightZigzag.js';
+import { FACES, straightRamp, courseNear } from './straightZigzag.js';
 import { squareSpiral, spiralPrefix } from './spiralPath.js';
 
 export function createInternal(p) {
   const S = p.straight, I = p.internal;
-  let switchCi = 0;
-  for (let i = 0; i < COURSES.length; i++) if (Math.abs(COURSES[i].y0 - p.switchY) < Math.abs(COURSES[switchCi].y0 - p.switchY)) switchCi = i;
+  const switchCi = courseNear(p.switchY);
   const switchY = COURSES[switchCi].y0;
   // inside the face; near the apex it cannot turn tighter than 4 m from the axis
   const r = (y) => Math.max(4, halfWidthAt(y) - I.inset);

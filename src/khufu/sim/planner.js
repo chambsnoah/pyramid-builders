@@ -17,7 +17,8 @@
 // Casing. The outer ring of cells is fine white Tura limestone, brought by boat.
 //
 // Sectors. A course is split into a k × k grid of sectors about SECTOR_M across, each with
-// a landing and setting crews (at least 2 × 2 sectors, so all the ramps share small courses). A sector's landing is the point of it nearest the ramp head
+// a landing and setting crews (at least 2 × 2 sectors, even where a single ramp serves the
+// whole course near the top). A sector's landing is the point of it nearest the ramp head
 // that serves it. Its blocks are set farthest-first from the landing, so the crews work
 // back toward it and never wall themselves in.
 import { COURSES, ELEMENTS, halfWidthAt, floorY, ceilY } from '../data.js';
@@ -198,7 +199,8 @@ export function buildPlan(ci, side, density, sectorM, layout) {
   }
   if (!p.n) return { ...p, k: 0, sectors: [] };
   const { n, cell, hw, type } = p;
-  // at least 2 × 2 sectors while there is room, so every ramp serves the small top courses
+  // at least 2 × 2 sectors while there is room, so the small top courses still have four
+  // landings and their crews (served from one ramp head or several)
   const k = n < 4 ? 1 : Math.max(2, Math.round((2 * hw) / sectorM)), ss = (2 * hw) / k;
   const sectors = [];
   for (let sz = 0; sz < k; sz++) for (let sx = 0; sx < k; sx++) {

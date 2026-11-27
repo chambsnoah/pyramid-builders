@@ -64,6 +64,27 @@ test('straight + zigzag: straight ramps up to the switch, then a zigzag on each 
   assert.ok(S.foot > S.head);
 });
 
+test('the top: one route above topY, on the same ramp as below', () => {
+  for (const id of ['straight-zigzag', 'spiral']) {
+    const th = theory(id), { top } = th;
+    assert.ok(Math.abs(top.y - DEFAULTS.ramp.topY) < 1, `${id}: top at ${top.y}`);
+    assert.equal(th.layout(top.ci - 1).routes.length, 4);
+    for (const ci of [top.ci, LAST - 1, LAST]) {
+      const { routes } = th.layout(ci);
+      assert.equal(routes.length, 1, `${id} course ${ci}`);
+      assert.equal(routes[0].id, DEFAULTS.ramp.topRoute);
+      // the same lanes as the route had below, so its queue carries on
+      const below = th.layout(top.ci - 1).routes.find((r) => r.id === routes[0].id);
+      assert.deepEqual(routes[0].segs.map((s) => s.res), below.segs.map((s) => s.res));
+    }
+  }
+  assert.equal(theory('internal').top, undefined);
+  // without topY every route goes to the apex
+  const all = createTheory(withDefaults({ ramp: { topY: Infinity } }).ramp);
+  assert.equal(all.top, null);
+  assert.equal(all.layout(LAST).routes.length, 4);
+});
+
 test('spiral and internal: the model climbs exactly the drawn path', () => {
   for (const id of ['spiral', 'internal']) {
     const th = theory(id);

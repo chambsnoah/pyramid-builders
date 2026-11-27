@@ -127,7 +127,7 @@ export function tourStops(S, theoryId = 'straight-zigzag') {
   }));
   // the ramp stop comes a few courses after the switch, once the new ramp has some length
   // and gangs are on it (minY: watch a gang above this height)
-  const sw = S.milestones.find((m) => m.kind === 'ramp');
+  const sw = S.milestones.find((m) => m.kind === 'ramp' && !m.top);
   const after = (y) => { const ci = COURSES.findIndex((c) => c.y0 >= y); return ci >= 0 && S.courseOpen[ci] >= 0 ? S.courseOpen[ci] : sw.t; };
   if (sw && theoryId === 'internal') {
     add(sw, () => ({

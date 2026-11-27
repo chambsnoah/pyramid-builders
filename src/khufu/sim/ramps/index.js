@@ -22,6 +22,8 @@
 // Optional, for drawing (sim/gangs.js, bubble.js) and the timeline:
 //   short                       a short name for tables
 //   switchCi, switchY, switchLabel   where the straight ramps stop (a milestone)
+//   top: { ci, y, route, label }  from course ci up only route `route` is in use; the others
+//                               stop at height y and are drawn up to there (a milestone)
 //   ledge(route, y) -> { pts, turns, length, end }   a theory whose ramp is a fixed path
 //                               (not a straight wedge) gives it here, from its foot (or the
 //                               top of the straight ramp) up to height y; the model's segment
