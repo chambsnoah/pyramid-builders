@@ -1,0 +1,61 @@
+# The agent reviews gate. Two AI reviewers look at every pull request: Kilo Code Review (a
+# check run) and CodeRabbit (a commit status). Both report success whatever they find, and
+# CodeRabbit's status turns successful even when it was rate limited and never reviewed the
+# commit. So, besides their own checks, main requires (branch protection):
+#   - every review thread resolved: a finding holds the merge (and auto-merge) until it is
+#     fixed and its thread resolved by whoever fixed it, or resolved to dismiss it;
+#   - this check, "CodeRabbit reviewed": it passes only once CodeRabbit's status on the
+#     commit says "Review completed". Rate limited, failed or skipped, it fails; a PR comment
+#     "@coderabbitai review" asks for the review again, and this check follows.
+# A workflow triggered by `status` runs from main, so it posts its result on the commit the
+# status is for (the PR's head) through the API, as a commit status of its own: a check run
+# made with the workflow token can land in an older Actions check suite and leave a required
+# check "Expected". Each run reads CodeRabbit's latest status on the commit, and runs for one
+# commit queue in order (per job, so skipped runs for other statuses don't take the slot),
+# so the last word is the latest status. Run it by hand (Actions → Agent reviews) to check a
+# commit again.
+name: Agent reviews
+
+on:
+  status:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to check again (full SHA)
+        required: true
+
+permissions:
+  statuses: write
+
+jobs:
+  coderabbit:
+    name: CodeRabbit reviewed (gate)
+    if: github.event_name == 'workflow_dispatch' || github.event.context == 'CodeRabbit'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: coderabbit-reviewed-${{ github.event.sha || inputs.sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Post the "CodeRabbit reviewed" status on the commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.sha || inputs.sha }}
+        run: |
+          set -euo pipefail
+          line="$(gh api "repos/$REPO/commits/$SHA/status" --jq '.statuses[] | select(.context == "CodeRabbit") | "\(.state)\t\(.description // "")"' | head -n 1)"
+          state="${line%%$'\t'*}"; desc="${line#*$'\t'}"
+          [ -n "$line" ] || { state=missing; desc="no CodeRabbit status on this commit"; }
+          echo "CodeRabbit on $SHA: $state ($desc)"
+          case "$state:$desc" in
+            pending:*)
+              out=pending; note="CodeRabbit is reviewing this commit" ;;
+            "success:Review completed"*)
+              out=success; note="CodeRabbit reviewed this commit; resolve its threads before merging" ;;
+            *)
+              out=failure; note="Not reviewed ($desc). Comment @coderabbitai review to ask again" ;;
+          esac
+          note="${note:0:140}"
+          gh api "repos/$REPO/statuses/$SHA" -f context="CodeRabbit reviewed" -f state="$out" -f description="$note" \
+            -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --jq '"posted \(.context): \(.state) (\(.description))"'

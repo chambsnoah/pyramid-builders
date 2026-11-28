@@ -141,6 +141,11 @@ npm run khufu:works   # room order, tunnelling rate, plugs in place, tunnellers 
 
 Every pull request runs the suite in GitHub Actions (`.github/workflows/test.yml`): one job for the event model, one for the browser.
 
+Two AI reviewers, Kilo Code Review and CodeRabbit, look at every pull request. Both report success whatever they find, and CodeRabbit does so even when it was rate limited and did not review. So merging into main, auto-merge included, also waits for:
+
+- **Every review thread resolved.** A finding holds the merge until it is fixed and its thread resolved. The reviewers don't always resolve their own threads, so whoever pushes the fix replies with the commit and resolves it. Resolving a thread without a fix dismisses the finding.
+- **CodeRabbit reviewed** (`.github/workflows/agent-reviews.yml`). It passes only once CodeRabbit's status on the commit says "Review completed". If CodeRabbit was rate limited, failed or skipped, the check fails; comment `@coderabbitai review` on the pull request to ask again, and the check follows.
+
 ```bash
 npm test             # all of it: unit tests, model checks, then the browser tests
 npm run test:unit    # unit tests of the event model (node --test, ~1 s)

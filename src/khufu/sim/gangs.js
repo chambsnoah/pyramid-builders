@@ -621,7 +621,7 @@ export function rampsForDrawing(sim, R = rampScene(sim)) {
   let ledges = null;
   if (th.ledge && !R.done) {
     const ids = th.layout(R.look).routes.filter((r) => r.segs.some((s) => s.kind !== 'straight')).map((r) => r.id);
-    if (top && R.look >= top.ci) for (const r of th.layout(top.ci - 1).routes) if (!ids.includes(r.id) && r.segs.some((s) => s.kind !== 'straight')) ids.push(r.id);
+    if (top && top.ci > 0 && R.look >= top.ci) for (const r of th.layout(top.ci - 1).routes) if (!ids.includes(r.id) && r.segs.some((s) => s.kind !== 'straight')) ids.push(r.id);
     ledges = ids.map((id) => th.ledge(id, upTo(id)).pts);
     if (!ledges.length) ledges = null;
   }
