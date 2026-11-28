@@ -7,10 +7,13 @@
 #   - this check, "CodeRabbit reviewed": it passes only once CodeRabbit's status on the
 #     commit says "Review completed". Rate limited, failed or skipped, it fails; a PR comment
 #     "@coderabbitai review" asks for the review again, and this check follows.
-# A workflow triggered by `status` runs from main, so it posts its check run on the commit
-# the status is for (the PR's head) through the API. Each run reads CodeRabbit's latest
-# status on the commit, and runs for one commit queue in order, so the last word is the
-# latest status. Run it by hand (Actions → Agent reviews) to check a commit again.
+# A workflow triggered by `status` runs from main, so it posts its result on the commit the
+# status is for (the PR's head) through the API, as a commit status of its own: a check run
+# made with the workflow token can land in an older Actions check suite and leave a required
+# check "Expected". Each run reads CodeRabbit's latest status on the commit, and runs for one
+# commit queue in order (per job, so skipped runs for other statuses don't take the slot),
+# so the last word is the latest status. Run it by hand (Actions → Agent reviews) to check a
+# commit again.
 name: Agent reviews
 
 on:
@@ -22,12 +25,7 @@ on:
         required: true
 
 permissions:
-  checks: write
-  statuses: read
-
-concurrency:
-  group: coderabbit-reviewed-${{ github.event.sha || inputs.sha }}
-  cancel-in-progress: false
+  statuses: write
 
 jobs:
   coderabbit:
@@ -35,8 +33,11 @@ jobs:
     if: github.event_name == 'workflow_dispatch' || github.event.context == 'CodeRabbit'
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    concurrency:
+      group: coderabbit-reviewed-${{ github.event.sha || inputs.sha }}
+      cancel-in-progress: false
     steps:
-      - name: Post "CodeRabbit reviewed" on the commit
+      - name: Post the "CodeRabbit reviewed" status on the commit
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -47,13 +48,14 @@ jobs:
           state="${line%%$'\t'*}"; desc="${line#*$'\t'}"
           [ -n "$line" ] || { state=missing; desc="no CodeRabbit status on this commit"; }
           echo "CodeRabbit on $SHA: $state ($desc)"
-          again='Comment `@coderabbitai review` on the pull request to ask for the review again; this check follows its status.'
           case "$state:$desc" in
             pending:*)
-              args=(-f status=in_progress -f "output[title]=CodeRabbit is reviewing" -f "output[summary]=Waiting for CodeRabbit to finish its review of this commit.") ;;
+              out=pending; note="CodeRabbit is reviewing this commit" ;;
             "success:Review completed"*)
-              args=(-f status=completed -f conclusion=success -f "output[title]=CodeRabbit reviewed this commit" -f "output[summary]=CodeRabbit finished its review. Its findings are review threads, which must be resolved before merging.") ;;
+              out=success; note="CodeRabbit reviewed this commit; resolve its threads before merging" ;;
             *)
-              args=(-f status=completed -f conclusion=failure -f "output[title]=CodeRabbit did not review this commit: $desc" -f "output[summary]=$again") ;;
+              out=failure; note="Not reviewed ($desc). Comment @coderabbitai review to ask again" ;;
           esac
-          gh api "repos/$REPO/check-runs" -f name="CodeRabbit reviewed" -f head_sha="$SHA" "${args[@]}" --jq '"posted \(.name): \(.status) \(.conclusion // "")"'
+          note="${note:0:140}"
+          gh api "repos/$REPO/statuses/$SHA" -f context="CodeRabbit reviewed" -f state="$out" -f description="$note" \
+            -f target_url="$GITHUB_SERVER_URL/$REPO/actions/runs/$GITHUB_RUN_ID" --jq '"posted \(.context): \(.state) (\(.description))"'
